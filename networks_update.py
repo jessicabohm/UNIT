@@ -51,6 +51,46 @@ class Decoder(nn.Module):
 
     def forward(self, x):
         return self.model(x)
+    
+### Updated to be VAE style
+class Encoder_VAE(nn.Module):
+    def __init__(self, n_downsample, n_res, input_dim, dim, norm, activ, pad_type):
+        super(Encoder, self).__init__()
+        self.model = []
+        self.model += [Conv3dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)]
+        # downsampling blocks
+        for i in range(n_downsample):
+            self.model += [Conv3dBlock(dim, 2 * dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)]
+            dim *= 2
+        # residual blocks
+        self.model += [ResBlocks(n_res, dim, norm=norm, activation=activ, pad_type=pad_type)]
+        self.model = nn.Sequential(*self.model)
+
+        self.output_dim = dim
+
+    def forward(self, x):
+        return self.model(x)
+
+class Decoder_VAE(nn.Module):
+    def __init__(self, n_upsample, n_res, dim, output_dim, res_norm='in', activ='relu', pad_type='zero'): # NOTE: updated normalization to in to not have to compute weight and bias externally
+        super(Decoder, self).__init__()
+
+        self.model = []
+        # map the mean and var back to one value (they are concatenated as input)
+        self.model += nn.Conv3dBlock(dim, dim, 1, 1, 0, norm='none', activation='none', pad_type=pad_type)
+        # AdaIN residual blocks # NOTE: changed!!
+        self.model += [ResBlocks(n_res, dim, res_norm, activ, pad_type=pad_type)]
+        # upsampling blocks
+        for i in range(n_upsample):
+            self.model += [nn.Upsample(scale_factor=2),
+                           Conv3dBlock(dim, dim // 2, 5, 1, 2, norm='ln', activation=activ, pad_type=pad_type)] # NOTE: could update to instance norm since only a batch size of 2 -> don't want to normalize over full layer??
+            dim //= 2
+        # use reflection padding in the last conv layer
+        self.model += [Conv3dBlock(dim, output_dim, 7, 1, 3, norm='none', activation='none', pad_type=pad_type)] 
+        self.model = nn.Sequential(*self.model)
+
+    def forward(self, x):
+        return self.model(x)
 
 
 ##################################################################################

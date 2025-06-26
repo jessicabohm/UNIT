@@ -2,7 +2,7 @@
 Copyright (C) 2018 NVIDIA Corporation.  All rights reserved.
 Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
 """
-from torch.utils.serialization import load_lua
+#from torch.utils.serialization import load_lua
 from torch.utils.data import DataLoader
 from networks import Vgg16
 from torch.autograd import Variable
@@ -17,6 +17,8 @@ import yaml
 import numpy as np
 import torch.nn.init as init
 import time
+import csv
+
 # Methods
 # get_all_data_loaders      : primary data loader interface (load trainA, testA, trainB, testB)
 # get_data_loader_list      : list-based data loader
@@ -97,7 +99,7 @@ def get_data_loader_folder(input_folder, batch_size, train, new_size=None,
 
 def get_config(config):
     with open(config, 'r') as stream:
-        return yaml.load(stream)
+        return yaml.load(stream, Loader=yaml.FullLoader)
 
 
 def eformat(f, prec):
@@ -108,11 +110,12 @@ def eformat(f, prec):
 
 
 def __write_images(image_outputs, display_image_num, file_name):
-    image_outputs = [images.expand(-1, 3, -1, -1) for images in image_outputs] # expand gray-scale images to 3 channels
+    #image_outputs = [images.expand(-1, 3, -1, -1) for images in image_outputs] # expand gray-scale images to 3 channels
+    slice_idx = image_outputs[0].shape[2] // 2
+    image_outputs = [img[:, :, slice_idx, :, :] for img in image_outputs]
     image_tensor = torch.cat([images[:display_image_num] for images in image_outputs], 0)
     image_grid = vutils.make_grid(image_tensor.data, nrow=display_image_num, padding=0, normalize=True)
     vutils.save_image(image_grid, file_name, nrow=1)
-
 
 def write_2images(image_outputs, display_image_num, image_directory, postfix):
     n = len(image_outputs)
@@ -173,6 +176,26 @@ def write_loss(iterations, trainer, train_writer):
     for m in members:
         train_writer.add_scalar(m, getattr(trainer, m), iterations + 1)
 
+def write_loss_to_csv(iterations, trainer, csv_file_path):
+    # Collect and convert loss/grad/nwd attributes to float
+    members = {}
+    for attr in dir(trainer):
+        if not callable(getattr(trainer, attr)) and not attr.startswith("__") and \
+           ('loss' in attr or 'grad' in attr or 'nwd' in attr):
+            val = getattr(trainer, attr)
+            if torch.is_tensor(val):
+                val = val.detach().cpu().item()
+            members[attr] = val
+
+    # Ensure CSV has a header
+    file_exists = os.path.isfile(csv_file_path)
+    with open(csv_file_path, mode='a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=['iteration'] + list(members.keys()))
+        if not file_exists:
+            writer.writeheader()
+        row = {'iteration': iterations + 1}
+        row.update(members)
+        writer.writerow(row)
 
 def slerp(val, low, high):
     """
