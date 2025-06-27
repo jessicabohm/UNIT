@@ -11,6 +11,8 @@ import torch.optim as optim
 from networks_update import Encoder, Decoder
 import csv
 import time
+import torchvision.utils as vutils
+
 
 class Segmentation3DDataset(Dataset):
     def __init__(self, image_paths, transform=None):
@@ -33,6 +35,13 @@ class Segmentation3DDataset(Dataset):
 
         return torch.from_numpy(image).to(torch.float)
     
+def __write_images(image_outputs, display_image_num, file_name):
+    #image_outputs = [images.expand(-1, 3, -1, -1) for images in image_outputs] # expand gray-scale images to 3 channels
+    slice_idx = image_outputs[0].shape[2] // 2
+    image_outputs = [img[:, :, slice_idx, :, :] for img in image_outputs]
+    image_tensor = torch.cat([images[:display_image_num] for images in image_outputs], 0)
+    image_grid = vutils.make_grid(image_tensor.data, nrow=display_image_num, padding=0, normalize=True)
+    vutils.save_image(image_grid, file_name, nrow=1)
 
 # Dataset path
 train_folder = "../3D-CycleGan-Pytorch-MedImaging/Data_folder_train_2/train/labels/"
@@ -70,9 +79,12 @@ train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
 val_dataset = Segmentation3DDataset(image_paths=val_paths)
 val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
+# for saving images during training
+display_size = 16 # num images to display
+
 # Initialize model
-encoder = Encoder(n_downsample=2, n_res=4, input_dim=1, dim=4, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
-decoder = Decoder(n_upsample=2, n_res=4, dim=encoder.output_dim, output_dim=4)
+encoder = Encoder(n_downsample=3, n_res=4, input_dim=1, dim=8, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+decoder = Decoder(n_upsample=3, n_res=4, dim=encoder.output_dim, output_dim=4)
 
 # Move to GPU if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -118,6 +130,9 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
     decoder.eval()
     val_loss = 0
 
+    img_to_save = []
+    recon_to_save = []
+
     with torch.no_grad():
         for i, val_batch in enumerate(val_loader):
             z = encoder(val_batch.float().to(device))
@@ -127,10 +142,24 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
 
             # save a few test images
             if save_imgs and (epoch % save_freq == 0) and i < 3:
-                recon = torch.argmax(recon, dim=1)
-                recon_img = sitk.GetImageFromArray(np.array(recon.detach().cpu()).squeeze())
+                recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
+                recon_to_save.append(recon) # might just be a shallow copy
+
+                recon_img = sitk.GetImageFromArray(np.array(recon))
+                # save a few nifty image reconstructions - use for analysis
                 sitk.WriteImage(recon_img, train_save_folder + "test_images/recon_" + val_paths[i].split("/")[-1].split(".")[0] + "_epoch_" + str(epoch) + ".nii")
-    
+
+                # to display
+                img_to_save.append(val_batch)
+
+            if i >= 3 and i < display_size:
+                recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
+                recon_to_save.append(recon)
+                img_to_save.append(val_batch)
+
+        # save a png of some reconstructions - to observe during training
+        
+
     train_loss = train_loss / len(train_loader)
     val_loss = val_loss / len(val_loader)
     elapsed_time = time.time() - epoch_start_time

@@ -273,35 +273,35 @@ class UNIT_Trainer(nn.Module):
         x_b_recon = self.gen_b.decode(h_b + n_b)
 
         # decode (cross domain) [the reconstruction - only for a(mouse) to b(human)]
-        #x_ba = self.gen_a.decode(h_b + n_b)
+        x_ba = self.gen_a.decode(h_b + n_b)
         x_ab = self.gen_b.decode(h_a + n_a) # also has 4 chanels of output
 
-        # NOTE: removed cycles
         # encode again
-        #h_b_recon, n_b_recon = self.gen_a.encode(x_ba)
-        #h_a_recon, n_a_recon = self.gen_b.encode(x_ab)
-        # decode again (if needed)
-        #x_aba = self.gen_a.decode(h_a_recon + n_a_recon) if hyperparameters['recon_x_cyc_w'] > 0 else None
-        #x_bab = self.gen_b.decode(h_b_recon + n_b_recon) if hyperparameters['recon_x_cyc_w'] > 0 else None
+        h_b_recon, n_b_recon = self.gen_a.encode(torch.argmax(x_ba, dim=1, keepdim=True).float())
+        h_a_recon, n_a_recon = self.gen_b.encode(torch.argmax(x_ab, dim=1, keepdim=True).float())
+
+        #decode again (if needed)
+        x_aba = self.gen_a.decode(h_a_recon + n_a_recon) if hyperparameters['recon_x_cyc_w'] > 0 else None
+        x_bab = self.gen_b.decode(h_b_recon + n_b_recon) if hyperparameters['recon_x_cyc_w'] > 0 else None
 
         # reconstruction loss
         self.loss_gen_recon_x_a = self.recon_criterion(x_a_recon, x_a.squeeze().long())
         self.loss_gen_recon_x_b = self.recon_criterion(x_b_recon, x_b.squeeze().long())
         self.loss_gen_recon_kl_a = self.__compute_kl(h_a)
         self.loss_gen_recon_kl_b = self.__compute_kl(h_b)
-        self.loss_gen_cyc_x_a = 0#self.recon_criterion(x_aba, x_a)
-        self.loss_gen_cyc_x_b = 0#self.recon_criterion(x_bab, x_b)
-        self.loss_gen_recon_kl_cyc_aba = 0#self.__compute_kl(h_a_recon)
-        self.loss_gen_recon_kl_cyc_bab = 0#self.__compute_kl(h_b_recon)
+        self.loss_gen_cyc_x_a = self.recon_criterion(x_aba, x_a.squeeze().long())
+        self.loss_gen_cyc_x_b = self.recon_criterion(x_bab, x_b.squeeze().long())
+        self.loss_gen_recon_kl_cyc_aba = self.__compute_kl(h_a_recon)
+        self.loss_gen_recon_kl_cyc_bab = self.__compute_kl(h_b_recon)
         # GAN loss
-        self.loss_gen_adv_a = 0#self.dis_a.calc_gen_loss(x_ba)
-
-        # reconstruct to one channel
+        x_ba = torch.argmax(x_ba, dim=1, keepdim=True).float()
+        self.loss_gen_adv_a = self.dis_a.calc_gen_loss(x_ba)
         x_ab = torch.argmax(x_ab, dim=1, keepdim=True).float()
         self.loss_gen_adv_b = self.dis_b.calc_gen_loss(x_ab)
+
         # domain-invariant perceptual loss
-        self.loss_gen_vgg_a = 0#self.compute_vgg_loss(self.vgg, x_ba, x_b) if hyperparameters['vgg_w'] > 0 else 0
-        self.loss_gen_vgg_b = 0#self.compute_vgg_loss(self.vgg, x_ab, x_a) if hyperparameters['vgg_w'] > 0 else 0
+        self.loss_gen_vgg_a = self.compute_vgg_loss(self.vgg, x_ba, x_b) if hyperparameters['vgg_w'] > 0 else 0
+        self.loss_gen_vgg_b = self.compute_vgg_loss(self.vgg, x_ab, x_a) if hyperparameters['vgg_w'] > 0 else 0
         
         # total loss (NOTE: a bunchhhh of these will be 0 now)
         self.loss_gen_total = hyperparameters['gan_w'] * self.loss_gen_adv_a + \
@@ -348,8 +348,8 @@ class UNIT_Trainer(nn.Module):
         x_ba = torch.argmax(x_ba, dim=1, keepdim=True)
         
 
-        return x_a, x_a_recon, x_ab, x_b, x_b_recon, x_ba
-
+        return x_a.cpu(), x_a_recon.cpu(), x_ab.cpu(), x_b.cpu(), x_b_recon.cpu(), x_ba.cpu()
+    
     def dis_update(self, x_a, x_b, hyperparameters):
         self.dis_opt.zero_grad()
         # encode
@@ -357,15 +357,16 @@ class UNIT_Trainer(nn.Module):
         h_b, n_b = self.gen_b.encode(x_b)
 
         # decode (cross domain) [only for a to b]
-        #x_ba = self.gen_a.decode(h_b + n_b)
+        x_ba = self.gen_a.decode(h_b + n_b)
         x_ab = self.gen_b.decode(h_a + n_a)
         # reconstruct to one channel
+        x_ba = torch.argmax(x_ba, dim=1, keepdim=True).float()
         x_ab = torch.argmax(x_ab, dim=1, keepdim=True).float()
 
         # D loss
-        #self.loss_dis_a = self.dis_a.calc_dis_loss(x_ba.detach(), x_a)
+        self.loss_dis_a = self.dis_a.calc_dis_loss(x_ba.detach(), x_a)
         self.loss_dis_b = self.dis_b.calc_dis_loss(x_ab.detach(), x_b)
-        self.loss_dis_total = hyperparameters['gan_w'] * self.loss_dis_b # + hyperparameters['gan_w'] * self.loss_dis_a + 
+        self.loss_dis_total = hyperparameters['gan_w'] * self.loss_dis_b + hyperparameters['gan_w'] * self.loss_dis_a
         self.loss_dis_total.backward()
         self.dis_opt.step()
 
