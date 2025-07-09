@@ -44,7 +44,7 @@ class Segmentation3DDataset(Dataset):
         return torch.from_numpy(image).to(torch.float)
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--config', type=str, default='configs/unit_mouse2human_train_4_folder.yaml', help='Path to the config file.')
+parser.add_argument('--config', type=str, default='configs/unit_mouse2human_anat_train_1.yaml', help='Path to the config file.')
 parser.add_argument('--output_path', type=str, default='.', help="outputs path")
 parser.add_argument("--resume", action="store_true")
 parser.add_argument('--trainer', type=str, default='UNIT', help="MUNIT|UNIT")
@@ -68,17 +68,17 @@ else:
 trainer.cuda()
 
 # Dataset path
-train_folder_mouse = "../3D-CycleGan-Pytorch-MedImaging/Data_folder_train_2/train/images/"
+train_folder_mouse = "./datasets/mouse_train_bigger/"
 train_paths_mouse = [train_folder_mouse + file_name for file_name in os.listdir(train_folder_mouse)]
 
-val_folder_mouse = "../3D-CycleGan-Pytorch-MedImaging/Data_folder_train_2/test/images/"
+val_folder_mouse = "./datasets/mouse_test_bigger/"
 val_paths_mouse = [val_folder_mouse + file_name for file_name in os.listdir(val_folder_mouse)]
 val_paths_mouse.sort()
 
-train_folder_human = "../3D-CycleGan-Pytorch-MedImaging/Data_folder_train_2/train/labels/"
+train_folder_human = "./datasets/human_train_bigger/"
 train_paths_human = [train_folder_human + file_name for file_name in os.listdir(train_folder_human)]
 
-val_folder_human = "../3D-CycleGan-Pytorch-MedImaging/Data_folder_train_2/test/labels/"
+val_folder_human = "./datasets/human_test_bigger/"
 val_paths_human = [val_folder_human + file_name for file_name in os.listdir(val_folder_human)]
 val_paths_human.sort()
 
@@ -105,7 +105,7 @@ checkpoint_directory, image_directory = prepare_sub_folder(output_directory)
 shutil.copy(opts.config, os.path.join(output_directory, 'config.yaml')) # copy config file to output folder
 
 # Start training
-opts.resume = True
+opts.resume = False
 iterations = trainer.resume(checkpoint_directory, hyperparameters=config) if opts.resume else 0
 while True:
     for it, (images_a, images_b) in enumerate(zip(train_loader_a, train_loader_b)):

@@ -238,6 +238,15 @@ class UNIT_Trainer(nn.Module):
     def recon_criterion(self, input, target):
         # NOTE: update to be CEL
         criterion = nn.CrossEntropyLoss()
+        print("input shape:", input.shape)
+        print("target shape:", target.shape)
+
+
+        print("Target min:", target.min().item())
+        print("Target max:", target.max().item())
+
+        assert target.min() >= 0, "Target has negative labels!"
+
         recon = criterion(input, target)
         return recon
     
@@ -285,12 +294,14 @@ class UNIT_Trainer(nn.Module):
         x_bab = self.gen_b.decode(h_b_recon + n_b_recon) if hyperparameters['recon_x_cyc_w'] > 0 else None
 
         # reconstruction loss
-        self.loss_gen_recon_x_a = self.recon_criterion(x_a_recon, x_a.squeeze().long())
-        self.loss_gen_recon_x_b = self.recon_criterion(x_b_recon, x_b.squeeze().long())
+        print("call with x_a (mouse)")
+        self.loss_gen_recon_x_a = self.recon_criterion(x_a_recon, x_a.squeeze(1).long())
+        print("call with x_b (human)")
+        self.loss_gen_recon_x_b = self.recon_criterion(x_b_recon, x_b.squeeze(1).long())
         self.loss_gen_recon_kl_a = self.__compute_kl(h_a)
         self.loss_gen_recon_kl_b = self.__compute_kl(h_b)
-        self.loss_gen_cyc_x_a = self.recon_criterion(x_aba, x_a.squeeze().long())
-        self.loss_gen_cyc_x_b = self.recon_criterion(x_bab, x_b.squeeze().long())
+        self.loss_gen_cyc_x_a = self.recon_criterion(x_aba, x_a.squeeze(1).long())
+        self.loss_gen_cyc_x_b = self.recon_criterion(x_bab, x_b.squeeze(1).long())
         self.loss_gen_recon_kl_cyc_aba = self.__compute_kl(h_a_recon)
         self.loss_gen_recon_kl_cyc_bab = self.__compute_kl(h_b_recon)
         # GAN loss

@@ -26,6 +26,12 @@ class Segmentation3DDataset(Dataset):
         image = sitk.ReadImage(self.image_paths[idx])
         image = sitk.GetArrayFromImage(image)
 
+            # # NOTE: just for a quick train test - pad the image to 144^3
+            # pad_x = 8
+            # pad_y = 12
+            # pad_z = 12
+            # image = np.pad(image, ((pad_x, pad_x), (pad_y, pad_y), (pad_z, pad_z)))
+
         # Add channel dimension if needed (C x D x H x W)
         if image.ndim == 3:
             image = np.expand_dims(image, axis=0)
@@ -36,25 +42,41 @@ class Segmentation3DDataset(Dataset):
         return torch.from_numpy(image).to(torch.float)
     
 def __write_images(image_outputs, display_image_num, file_name):
-    #image_outputs = [images.expand(-1, 3, -1, -1) for images in image_outputs] # expand gray-scale images to 3 channels
-    slice_idx = image_outputs[0].shape[2] // 2
-    image_outputs = [img[:, :, slice_idx, :, :] for img in image_outputs]
-    image_tensor = torch.cat([images[:display_image_num] for images in image_outputs], 0)
-    image_grid = vutils.make_grid(image_tensor.data, nrow=display_image_num, padding=0, normalize=True)
-    vutils.save_image(image_grid, file_name, nrow=1)
+    imgs = image_outputs[0]  # [B, D, H, W]
+    recons = image_outputs[1]
+
+    slice_idx = imgs.shape[1] // 2  # Take middle slice in depth (D)
+
+    # Extract the same slice from each volume
+    input_slices = [img[slice_idx, :, :] for img in imgs[:display_image_num]]
+    recon_slices = [img[slice_idx, :, :] for img in recons[:display_image_num]]
+
+    # Stack into [N, 1, H, W] for each
+    input_tensor = torch.stack(input_slices).unsqueeze(1)  # shape: [N, 1, H, W]
+    recon_tensor = torch.stack(recon_slices).unsqueeze(1)
+
+    # Make grid of N images in a row
+    input_grid = vutils.make_grid(input_tensor.float(), nrow=display_image_num, padding=2, normalize=True)
+    recon_grid = vutils.make_grid(recon_tensor.float(), nrow=display_image_num, padding=2, normalize=True)
+
+    # Stack them vertically (row 1 on top of row 2)
+    full_grid = torch.cat([input_grid, recon_grid], dim=1)
+
+    # Save the grid
+    vutils.save_image(full_grid, file_name)
 
 # Dataset path
-train_folder = "../3D-CycleGan-Pytorch-MedImaging/Data_folder_train_2/train/labels/"
+train_folder = "./datasets/mouse_train_bigger/"
 train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
 train_paths = train_paths
 
-val_folder = "../3D-CycleGan-Pytorch-MedImaging/Data_folder_train_2/test/labels/"
+val_folder = "./datasets/mouse_test_bigger/"
 val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./save_models/human_train_5/"
+train_save_folder = "./save_anat_e_d/mouse_train_1/"
 
 # file to save losses
 csv_file = 'loss_log.csv'
@@ -67,14 +89,15 @@ num_epochs = 500
 
 # how often to save model checkpoints and images
 save_imgs = True
-save_freq = 20
+save_imgs_freq = 1
+save_model_freq = 50
 
 ###################################################################################################################
 ################################################################################################################### finish setting some params
 
 # Create dataset and dataloader
 train_dataset = Segmentation3DDataset(image_paths=train_paths)
-train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
 
 val_dataset = Segmentation3DDataset(image_paths=val_paths)
 val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
@@ -83,8 +106,8 @@ val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 display_size = 16 # num images to display
 
 # Initialize model
-encoder = Encoder(n_downsample=3, n_res=4, input_dim=1, dim=8, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
-decoder = Decoder(n_upsample=3, n_res=4, dim=encoder.output_dim, output_dim=4)
+encoder = Encoder(n_downsample=3, n_res=4, input_dim=1, dim=2, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+decoder = Decoder(n_upsample=3, n_res=4, dim=encoder.output_dim, output_dim=271) # output_dim=# channels in seg
 
 # Move to GPU if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -102,6 +125,8 @@ optimizer = optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), 
 
 save_loss = []
 
+os.makedirs(train_save_folder + "test_images/" , exist_ok=True)
+
 print("Start training!!")
 for epoch in range(start_epoch, start_epoch + num_epochs + 1):
     epoch_start_time = time.time()
@@ -117,7 +142,7 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
         recon = decoder(z)
 
         # Compute loss
-        loss = criterion(recon, batch.squeeze().to(torch.long))
+        loss = criterion(recon, batch.squeeze(1).long())
 
         # Backprop
         optimizer.zero_grad()
@@ -141,7 +166,7 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
             val_loss += loss.item()
 
             # save a few test images
-            if save_imgs and (epoch % save_freq == 0) and i < 3:
+            if save_imgs and (epoch % save_imgs_freq == 0) and i < 3:
                 recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
                 recon_to_save.append(recon) # might just be a shallow copy
 
@@ -152,13 +177,18 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
                 # to display
                 img_to_save.append(val_batch)
 
-            if i >= 3 and i < display_size:
+            if save_imgs and i >= 3 and i < display_size and (epoch % save_imgs_freq == 0):
                 recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
                 recon_to_save.append(recon)
                 img_to_save.append(val_batch)
 
         # save a png of some reconstructions - to observe during training
-        
+        if save_imgs and epoch % save_imgs_freq == 0:
+            img_to_save = torch.stack(img_to_save).squeeze()
+            recon_to_save = torch.stack(recon_to_save)
+
+            print("save images...")
+            __write_images([img_to_save, recon_to_save], display_size, train_save_folder + "test_images/recons_epoch_" + str(epoch) + ".png")
 
     train_loss = train_loss / len(train_loader)
     val_loss = val_loss / len(val_loader)
@@ -171,7 +201,7 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
         writer.writerow([epoch, train_loss, val_loss])  # Writes a single row with two values
 
     # save model checkpoint
-    if epoch % save_freq == 0:
+    if epoch % save_model_freq == 0:
         checkpoint = {
             'epoch': epoch,
             'encoder_state_dict': encoder.state_dict(),

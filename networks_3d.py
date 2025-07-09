@@ -35,9 +35,9 @@ class MsImageDis(nn.Module):
     def _make_net(self):
         dim = self.dim
         cnn_x = []
-        cnn_x += [Conv3dBlock(self.input_dim, dim, 4, 2, 1, norm='none', activation=self.activ, pad_type=self.pad_type)]
+        cnn_x += [Conv3dBlock(self.input_dim, dim, 3, 2, 1, norm='none', activation=self.activ, pad_type=self.pad_type)]
         for i in range(self.n_layer - 1):
-            cnn_x += [Conv3dBlock(dim, dim * 2, 4, 2, 1, norm=self.norm, activation=self.activ, pad_type=self.pad_type)]
+            cnn_x += [Conv3dBlock(dim, dim * 2, 3, 2, 1, norm=self.norm, activation=self.activ, pad_type=self.pad_type)]
             dim *= 2
         cnn_x += [nn.Conv3d(dim, 1, 1, 1, 0)]
         cnn_x = nn.Sequential(*cnn_x)
@@ -160,7 +160,7 @@ class VAEGen(nn.Module):
         # content encoder
         self.enc = ContentEncoder(n_downsample, n_res, input_dim, dim, 'in', activ, pad_type=pad_type)
         # NOTE: update for CEL to output 4 channels
-        self.dec = Decoder(n_downsample, n_res, self.enc.output_dim, 4, res_norm='in', activ=activ, pad_type=pad_type)
+        self.dec = Decoder(n_downsample, n_res, self.enc.output_dim, 271, res_norm='in', activ=activ, pad_type=pad_type)
 
     def forward(self, images):
         # This is a reduced VAE implementation where we assume the outputs are multivariate Gaussian distribution with mean = hiddens and std_dev = all ones.
