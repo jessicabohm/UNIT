@@ -68,17 +68,17 @@ else:
 trainer.cuda()
 
 # Dataset path
-train_folder_mouse = "./datasets/mouse_train_bigger/"
+train_folder_mouse = "./datasets/mouse_train/"
 train_paths_mouse = [train_folder_mouse + file_name for file_name in os.listdir(train_folder_mouse)]
 
-val_folder_mouse = "./datasets/mouse_test_bigger/"
+val_folder_mouse = "./datasets/mouse_test/"
 val_paths_mouse = [val_folder_mouse + file_name for file_name in os.listdir(val_folder_mouse)]
 val_paths_mouse.sort()
 
-train_folder_human = "./datasets/human_train_bigger/"
+train_folder_human = "./datasets/human_train/"
 train_paths_human = [train_folder_human + file_name for file_name in os.listdir(train_folder_human)]
 
-val_folder_human = "./datasets/human_test_bigger/"
+val_folder_human = "./datasets/human_test/"
 val_paths_human = [val_folder_human + file_name for file_name in os.listdir(val_folder_human)]
 val_paths_human.sort()
 

@@ -24,15 +24,15 @@ class Segmentation3DDataset(Dataset):
         image = sitk.ReadImage(self.image_paths[idx])
         image = sitk.GetArrayFromImage(image)
 
-        # NOTE: just for a quick train test - pad the image to 144^3
-        pad_x = 8
-        pad_y = 12
-        pad_z = 12
-        image = np.pad(image, ((pad_x, pad_x), (pad_y, pad_y), (pad_z, pad_z)))
+        # # NOTE: just for a quick train test - pad the image to 144^3
+        # pad_x = 8
+        # pad_y = 12
+        # pad_z = 12
+        # image = np.pad(image, ((pad_x, pad_x), (pad_y, pad_y), (pad_z, pad_z)))
 
         # Add channel dimension if needed (C x D x H x W)
-        if image.ndim == 3:
-            image = np.expand_dims(image, axis=0)
+        #if image.ndim == 3:
+        image = np.expand_dims(image, axis=0)
         
         if self.transform:
             image = self.transform(image)
@@ -42,18 +42,19 @@ class Segmentation3DDataset(Dataset):
 
 # Dataset path
 
-test_folder = "../3D-CycleGan-Pytorch-MedImaging/data/test/labels/"
+test_folder = "./datasets/2d/human_test/"
 test_files = os.listdir(test_folder)
 test_paths = [test_folder + file_name for file_name in test_files]
 
 # folder to save model checkpoints
-train_save_folder = "./save_models/human_train_12/"
+train_save_folder = "./save_2d/human_train_3/"
 
 # checkpoint to load
-epoch = 150
+epoch = 1000
 
 # folder to save reconstructed images to
 recon_folder = "recon_images_epoch_" + str(epoch)
+os.makedirs(train_save_folder + recon_folder, exist_ok=True)
 
 # where to eval (NOTE: wayyyy faster with gpu - 6 sec vs 2 min 30 sec)
 gpu = True
@@ -66,8 +67,8 @@ test_dataset = Segmentation3DDataset(image_paths=test_paths)
 test_loader = DataLoader(test_dataset, batch_size=1)
 
 # Initialize model
-encoder = Encoder(n_downsample=4, n_res=1, input_dim=1, dim=4, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
-decoder = Decoder(n_upsample=4, n_res=1, dim=encoder.output_dim, output_dim=4)
+encoder = Encoder(n_downsample=3, n_res=2, input_dim=1, dim=2, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+decoder = Decoder(n_upsample=3, n_res=2, dim=encoder.output_dim, output_dim=4)
 
 # load from checkpoint to test
 encoder.load_state_dict(torch.load(train_save_folder + "checkpoint_epoch_" + str(epoch))['encoder_state_dict'])

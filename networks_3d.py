@@ -344,6 +344,7 @@ class Conv3dBlock(nn.Module):
             x = self.activation(x)
         return x
 
+
 class LinearBlock(nn.Module):
     def __init__(self, input_dim, output_dim, norm='none', activation='relu'):
         super(LinearBlock, self).__init__()

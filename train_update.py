@@ -25,16 +25,14 @@ class Segmentation3DDataset(Dataset):
     def __getitem__(self, idx):
         image = sitk.ReadImage(self.image_paths[idx])
         image = sitk.GetArrayFromImage(image)
+        # # NOTE: just for a quick train test - pad the image to 144^3
+        pad_x = 4
+        pad_y = 4
+        # pad_z = 12
+        image = np.pad(image, ((pad_x, pad_x), (pad_y, pad_y)))
 
-            # # NOTE: just for a quick train test - pad the image to 144^3
-            # pad_x = 8
-            # pad_y = 12
-            # pad_z = 12
-            # image = np.pad(image, ((pad_x, pad_x), (pad_y, pad_y), (pad_z, pad_z)))
-
-        # Add channel dimension if needed (C x D x H x W)
-        if image.ndim == 3:
-            image = np.expand_dims(image, axis=0)
+        # Add channel dimension
+        image = np.expand_dims(image, axis=0)
         
         if self.transform:
             image = self.transform(image)
@@ -45,11 +43,15 @@ def __write_images(image_outputs, display_image_num, file_name):
     imgs = image_outputs[0]  # [B, D, H, W]
     recons = image_outputs[1]
 
-    slice_idx = imgs.shape[1] // 2  # Take middle slice in depth (D)
+    # NOTE: comment out for 2d test
+    # slice_idx = imgs.shape[1] // 2  # Take middle slice in depth (D)
 
-    # Extract the same slice from each volume
-    input_slices = [img[slice_idx, :, :] for img in imgs[:display_image_num]]
-    recon_slices = [img[slice_idx, :, :] for img in recons[:display_image_num]]
+    # # Extract the same slice from each volume
+    # input_slices = [img[slice_idx, :, :] for img in imgs[:display_image_num]]
+    # recon_slices = [img[slice_idx, :, :] for img in recons[:display_image_num]]
+
+    input_slices = [img for img in imgs[:display_image_num]]
+    recon_slices = [img for img in recons[:display_image_num]]
 
     # Stack into [N, 1, H, W] for each
     input_tensor = torch.stack(input_slices).unsqueeze(1)  # shape: [N, 1, H, W]
@@ -66,17 +68,19 @@ def __write_images(image_outputs, display_image_num, file_name):
     vutils.save_image(full_grid, file_name)
 
 # Dataset path
-train_folder = "./datasets/mouse_train_bigger/"
+train_folder = "./datasets/2d/human_train/"
 train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
 train_paths = train_paths
 
-val_folder = "./datasets/mouse_test_bigger/"
+val_folder = "./datasets/2d/human_test/"
 val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./save_anat_e_d/mouse_train_1/"
+train_save_folder = "./save_2d/human_train_3/"
+os.makedirs(train_save_folder, exist_ok=True)
+
 
 # file to save losses
 csv_file = 'loss_log.csv'
@@ -85,12 +89,12 @@ csv_file = 'loss_log.csv'
 start_epoch = 0
 
 # num epoch to train for
-num_epochs = 500
+num_epochs = 1000
 
 # how often to save model checkpoints and images
 save_imgs = True
-save_imgs_freq = 1
-save_model_freq = 50
+save_imgs_freq = 100
+save_model_freq = 200
 
 ###################################################################################################################
 ################################################################################################################### finish setting some params
@@ -106,8 +110,8 @@ val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 display_size = 16 # num images to display
 
 # Initialize model
-encoder = Encoder(n_downsample=3, n_res=4, input_dim=1, dim=2, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
-decoder = Decoder(n_upsample=3, n_res=4, dim=encoder.output_dim, output_dim=271) # output_dim=# channels in seg
+encoder = Encoder(n_downsample=3, n_res=2, input_dim=1, dim=2, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+decoder = Decoder(n_upsample=3, n_res=2, dim=encoder.output_dim, output_dim=4) # output_dim=# channels in seg
 
 # Move to GPU if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

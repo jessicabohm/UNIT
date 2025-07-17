@@ -13,6 +13,7 @@ except ImportError: # will be 3.x series
 ##################################################################################
 # Encoder and Decoders
 ##################################################################################
+two_d = True
 
 # They had a Style and Content encoder - this content encoder just had resnet blocks instead
 # of global average pooling??
@@ -20,10 +21,17 @@ class Encoder(nn.Module):
     def __init__(self, n_downsample, n_res, input_dim, dim, norm, activ, pad_type):
         super(Encoder, self).__init__()
         self.model = []
-        self.model += [Conv3dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)]
+        if two_d:
+            self.model += [Conv2dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)]
+        else:
+            self.model += [Conv3dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)]
+
         # downsampling blocks
         for i in range(n_downsample):
-            self.model += [Conv3dBlock(dim, 2 * dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)]
+            if two_d:
+                self.model += [Conv2dBlock(dim, 2 * dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)]
+            else:
+                self.model += [Conv3dBlock(dim, 2 * dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)]
             dim *= 2
         # residual blocks
         self.model += [ResBlocks(n_res, dim, norm=norm, activation=activ, pad_type=pad_type)]
@@ -42,11 +50,20 @@ class Decoder(nn.Module):
         self.model += [ResBlocks(n_res, dim, res_norm, activ, pad_type=pad_type)]
         # upsampling blocks
         for i in range(n_upsample):
-            self.model += [nn.Upsample(scale_factor=2),
-                           Conv3dBlock(dim, dim // 2, 5, 1, 2, norm='in', activation=activ, pad_type=pad_type)] # NOTE: could update to instance norm since only a batch size of 2 -> don't want to normalize over full layer??
+            if two_d:
+                self.model += [nn.Upsample(scale_factor=2),
+                            Conv2dBlock(dim, dim // 2, 5, 1, 2, norm='in', activation=activ, pad_type=pad_type)] # NOTE: could update to instance norm since only a batch size of 2 -> don't want to normalize over full layer??
+            else:
+                self.model += [nn.Upsample(scale_factor=2),
+                    Conv3dBlock(dim, dim // 2, 5, 1, 2, norm='in', activation=activ, pad_type=pad_type)] # NOTE: could update to instance norm since only a batch size of 2 -> don't want to normalize over full layer??
+            
             dim //= 2
         # use reflection padding in the last conv layer
-        self.model += [Conv3dBlock(dim, output_dim, 7, 1, 3, norm='none', activation='none', pad_type=pad_type)] 
+        if two_d:
+            self.model += [Conv2dBlock(dim, output_dim, 7, 1, 3, norm='none', activation='none', pad_type=pad_type)] 
+        else:
+            self.model += [Conv3dBlock(dim, output_dim, 7, 1, 3, norm='none', activation='none', pad_type=pad_type)] 
+
         self.model = nn.Sequential(*self.model)
 
     def forward(self, x):
@@ -116,8 +133,14 @@ class ResBlock(nn.Module):
         super(ResBlock, self).__init__()
 
         model = []
-        model += [Conv3dBlock(dim ,dim, 3, 1, 1, norm=norm, activation=activation, pad_type=pad_type)]
-        model += [Conv3dBlock(dim ,dim, 3, 1, 1, norm=norm, activation='none', pad_type=pad_type)]
+
+        if two_d:
+            model += [Conv2dBlock(dim ,dim, 3, 1, 1, norm=norm, activation=activation, pad_type=pad_type)]
+            model += [Conv2dBlock(dim ,dim, 3, 1, 1, norm=norm, activation='none', pad_type=pad_type)]
+        else:
+            model += [Conv3dBlock(dim ,dim, 3, 1, 1, norm=norm, activation=activation, pad_type=pad_type)]
+            model += [Conv3dBlock(dim ,dim, 3, 1, 1, norm=norm, activation='none', pad_type=pad_type)]
+
         self.model = nn.Sequential(*model)
 
     def forward(self, x):
@@ -184,10 +207,80 @@ class Conv3dBlock(nn.Module):
             x = self.activation(x)
         return x
     
+class Conv2dBlock(nn.Module):
+    def __init__(self, input_dim ,output_dim, kernel_size, stride,
+                 padding=0, norm='none', activation='relu', pad_type='zero'):
+        super(Conv2dBlock, self).__init__()
+        self.use_bias = True
+        # initialize padding
+        if pad_type == 'reflect':
+            self.pad = nn.ReflectionPad2d(padding)
+        elif pad_type == 'replicate':
+            self.pad = nn.ReplicationPad2d(padding)
+        elif pad_type == 'zero':
+            self.pad = nn.ZeroPad2d(padding)
+        else:
+            assert 0, "Unsupported padding type: {}".format(pad_type)
+
+        # initialize normalization
+        norm_dim = output_dim
+        if norm == 'bn':
+            self.norm = nn.BatchNorm2d(norm_dim)
+        elif norm == 'in':
+            #self.norm = nn.InstanceNorm2d(norm_dim, track_running_stats=True)
+            self.norm = nn.InstanceNorm2d(norm_dim)
+        elif norm == 'ln':
+            self.norm = LayerNorm(norm_dim)
+        elif norm == 'adain':
+            self.norm = AdaptiveInstanceNorm2d(norm_dim)
+        elif norm == 'none':
+            self.norm = None
+        else:
+            assert 0, "Unsupported normalization: {}".format(norm)
+
+        # initialize activation
+        if activation == 'relu':
+            self.activation = nn.ReLU(inplace=True)
+        elif activation == 'lrelu':
+            self.activation = nn.LeakyReLU(0.2, inplace=True)
+        elif activation == 'prelu':
+            self.activation = nn.PReLU()
+        elif activation == 'selu':
+            self.activation = nn.SELU(inplace=True)
+        elif activation == 'tanh':
+            self.activation = nn.Tanh()
+        elif activation == 'none':
+            self.activation = None
+        else:
+            assert 0, "Unsupported activation: {}".format(activation)
+
+        # initialize convolution
+        self.conv = nn.Conv2d(input_dim, output_dim, kernel_size, stride, bias=self.use_bias)
+
+    def forward(self, x):
+        x = self.conv(self.pad(x))
+        if self.norm:
+            x = self.norm(x)
+        if self.activation:
+            x = self.activation(x)
+        return x
+    
 
 ##################################################################################
 # Normalization layers
 ##################################################################################
+class AdaptiveInstanceNorm2d(nn.Module):
+    def __init__(self, num_features, eps=1e-5, momentum=0.1):
+        super(AdaptiveInstanceNorm2d, self).__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.momentum = momentum
+        # weight and bias are dynamically assigned
+        self.weight = None
+        self.bias = None
+        # just dummy buffers, not used
+        self.register_buffer('running_mean', torch.zeros(num_features))
+        self.register_buffer('running_var', torch.ones(num_features))
 
 # NOTE: why was it 2d???
 class AdaptiveInstanceNorm3d(nn.Module):
