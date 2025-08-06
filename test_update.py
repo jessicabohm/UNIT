@@ -42,12 +42,12 @@ class Segmentation3DDataset(Dataset):
 
 # Dataset path
 
-test_folder = "./datasets/2d/human_test/"
+test_folder = "./datasets/2d_larger/mouse_test/"
 test_files = os.listdir(test_folder)
 test_paths = [test_folder + file_name for file_name in test_files]
 
 # folder to save model checkpoints
-train_save_folder = "./save_2d/human_train_3/"
+train_save_folder = "./save_2d/2d_larger/mouse_train_1/"
 
 # checkpoint to load
 epoch = 1000
@@ -67,7 +67,7 @@ test_dataset = Segmentation3DDataset(image_paths=test_paths)
 test_loader = DataLoader(test_dataset, batch_size=1)
 
 # Initialize model
-encoder = Encoder(n_downsample=3, n_res=2, input_dim=1, dim=2, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+encoder = Encoder(n_downsample=3, n_res=2, input_dim=1, dim=4, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
 decoder = Decoder(n_upsample=3, n_res=2, dim=encoder.output_dim, output_dim=4)
 
 # load from checkpoint to test
