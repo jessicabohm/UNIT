@@ -13,7 +13,8 @@ except ImportError: # will be 3.x series
 ##################################################################################
 # Encoder and Decoders
 ##################################################################################
-two_d = True
+
+two_d = False # NOTE: 2D vs 3D
 
 # They had a Style and Content encoder - this content encoder just had resnet blocks instead
 # of global average pooling??
