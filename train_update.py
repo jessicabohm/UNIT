@@ -101,7 +101,7 @@ val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./save_anat_e_d/mouse_train_2/"
+train_save_folder = "./save_anat_e_d/mouse_train_3/"
 os.makedirs(train_save_folder, exist_ok=True)
 
 
@@ -133,8 +133,8 @@ val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=4,
 display_size = 16 # num images to display
 
 # Initialize model
-encoder = Encoder(n_downsample=2, n_res=4, input_dim=1, dim=8, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
-decoder = Decoder(n_upsample=2, n_res=4, dim=encoder.output_dim, output_dim=271) # output_dim=# channels in seg (4/271 - since include background)
+encoder = Encoder(n_downsample=3, n_res=4, input_dim=1, dim=4, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+decoder = Decoder(n_upsample=3, n_res=4, dim=encoder.output_dim, output_dim=271) # output_dim=# channels in seg (4/271 - since include background)
 
 # Move to GPU if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
