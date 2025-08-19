@@ -91,17 +91,17 @@ def __write_images(image_outputs, display_image_num, file_name):
 
 
 # Dataset path
-train_folder = "./datasets/anat/mouse_train/"
+train_folder = "./datasets/anat/human_train/"
 train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
 train_paths = train_paths
 
-val_folder = "./datasets/anat/mouse_test/"
+val_folder = "./datasets/anat/human_test/"
 val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./save_anat_e_d/mouse_train_3/"
+train_save_folder = "./save_anat_e_d/human_train_3/"
 os.makedirs(train_save_folder, exist_ok=True)
 
 
@@ -112,12 +112,12 @@ csv_file = 'loss_log.csv'
 start_epoch = 0
 
 # num epoch to train for
-num_epochs = 1000
+num_epochs = 500
 
 # how often to save model checkpoints and images
 save_imgs = True
-save_imgs_freq = 100
-save_model_freq = 100
+save_imgs_freq = 25
+save_model_freq = 25
 
 ###################################################################################################################
 ################################################################################################################### finish setting some params

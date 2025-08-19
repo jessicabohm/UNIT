@@ -14,7 +14,8 @@ except ImportError: # will be 3.x series
 # Encoder and Decoders
 ##################################################################################
 
-two_d = False # NOTE: 2D vs 3D
+two_d = True # NOTE: 2D vs 3D
+
 
 # They had a Style and Content encoder - this content encoder just had resnet blocks instead
 # of global average pooling??
@@ -73,42 +74,97 @@ class Decoder(nn.Module):
 ### Updated to be VAE style
 class Encoder_VAE(nn.Module):
     def __init__(self, n_downsample, n_res, input_dim, dim, norm, activ, pad_type):
-        super(Encoder, self).__init__()
+        super(Encoder_VAE, self).__init__()
         self.model = []
-        self.model += [Conv3dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)]
+        if two_d:
+            self.model += [Conv2dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)]
+        else:
+            self.model += [Conv3dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)]
+
         # downsampling blocks
         for i in range(n_downsample):
-            self.model += [Conv3dBlock(dim, 2 * dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)]
+            if two_d:
+                self.model += [Conv2dBlock(dim, 2 * dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)]
+            else:
+                self.model += [Conv3dBlock(dim, 2 * dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)]
             dim *= 2
+
         # residual blocks
         self.model += [ResBlocks(n_res, dim, norm=norm, activation=activ, pad_type=pad_type)]
-        self.model = nn.Sequential(*self.model)
+
+        # latent_dim = 128
+        # flattened_dim = 16*15*15*16 # NOTE: update for 3D
+
+        latent_dim = 8192
+        flattened_dim = 32*30*30 # NOTE: update for 3D
+
+        # NOTE: extra to map down to lower dim
+        self.model += [nn.Flatten(), nn.Linear(flattened_dim, latent_dim), nn.LayerNorm(latent_dim), nn.ReLU()]
 
         self.output_dim = dim
 
+        # NOTE: dim might be incorrect here??
+        self.inplace = nn.Linear(latent_dim, latent_dim)
+        #self.inplace = nn.Linear(flattened_dim, flattened_dim)
+
+        self.model = nn.Sequential(*self.model)
+
     def forward(self, x):
-        return self.model(x)
+        out = self.model(x)
+        means = self.inplace(out)
+        log_vars = self.inplace(out) # why was it called log vars? Probs cuz of how it's used in KL divergence
+        return means, log_vars
+    
+class Reshape(nn.Module):
+    def __init__(self):
+        super().__init__()
+        #self.shape = (16, 16, 15, 15)  # e.g., (-1, 512) or (batch_size, channels, height, width)
+        self.shape = (32, 30, 30)  # e.g., (-1, 512) or (batch_size, channels, height, width)
+
+    def forward(self, x):
+        return x.reshape(x.size(0), *self.shape)  # keeps batch dim intact
 
 class Decoder_VAE(nn.Module):
     def __init__(self, n_upsample, n_res, dim, output_dim, res_norm='in', activ='relu', pad_type='zero'): # NOTE: updated normalization to in to not have to compute weight and bias externally
-        super(Decoder, self).__init__()
+        super(Decoder_VAE, self).__init__()
 
         self.model = []
-        # map the mean and var back to one value (they are concatenated as input)
-        self.model += nn.Conv3dBlock(dim, dim, 1, 1, 0, norm='none', activation='none', pad_type=pad_type)
+
+        # latent_dim = 128 
+        # flattened_dim = 16*15*15*16
+
+        latent_dim = 8192 
+        flattened_dim = 32*30*30
+
+        self.model += [nn.Linear(latent_dim, flattened_dim), nn.LayerNorm(flattened_dim), nn.ReLU(), Reshape()]
+        #self.model += [Reshape()]
+        
         # AdaIN residual blocks # NOTE: changed!!
         self.model += [ResBlocks(n_res, dim, res_norm, activ, pad_type=pad_type)]
+
         # upsampling blocks
         for i in range(n_upsample):
-            self.model += [nn.Upsample(scale_factor=2),
-                           Conv3dBlock(dim, dim // 2, 5, 1, 2, norm='in', activation=activ, pad_type=pad_type)] # NOTE: could update to instance norm since only a batch size of 2 -> don't want to normalize over full layer??
+            if two_d:
+                self.model += [nn.Upsample(scale_factor=2),
+                            Conv2dBlock(dim, dim // 2, 5, 1, 2, norm='in', activation=activ, pad_type=pad_type)] # NOTE: could update to instance norm since only a batch size of 2 -> don't want to normalize over full layer??
+            else:
+                self.model += [nn.Upsample(scale_factor=2),
+                    Conv3dBlock(dim, dim // 2, 5, 1, 2, norm='in', activation=activ, pad_type=pad_type)] # NOTE: could update to instance norm since only a batch size of 2 -> don't want to normalize over full layer??
+            
             dim //= 2
         # use reflection padding in the last conv layer
-        self.model += [Conv3dBlock(dim, output_dim, 7, 1, 3, norm='none', activation='none', pad_type=pad_type)] 
+        if two_d:
+            self.model += [Conv2dBlock(dim, output_dim, 7, 1, 3, norm='none', activation='none', pad_type=pad_type)] 
+        else:
+            self.model += [Conv3dBlock(dim, output_dim, 7, 1, 3, norm='none', activation='none', pad_type=pad_type)] 
+
+        # use reflection padding in the last conv layer
         self.model = nn.Sequential(*self.model)
 
     def forward(self, x):
         return self.model(x)
+    
+
 
 
 ##################################################################################

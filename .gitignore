@@ -12,3 +12,17 @@ src/yaml_generator.py
 *.zip
 *.pkl
 *.pyc
+*.jpg
+*.txt
+datasets/
+*.csv
+*.pth
+outputs/
+*.npy
+*.nii
+*.pt
+*.png
+save_2d/
+VAE_train/
+save_anat_e_d/
+save_models/

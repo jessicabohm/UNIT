@@ -11,19 +11,25 @@ import torch.optim as optim
 from networks_update import *
 import csv
 import time
+import torchvision.utils as vutils
+import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap, BoundaryNorm
+
 
 # Dataset path
-train_folder = "../3D-CycleGan-Pytorch-MedImaging/Data_folder_train_2/train/images/"
+train_folder = "./datasets/anat_2d/human_train/"
 train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
 train_paths = train_paths
 
-val_folder = "../3D-CycleGan-Pytorch-MedImaging/Data_folder_train_2/test/images/"
+val_folder = "./datasets/anat_2d/human_test/"
 val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./VAE_train/train_1/"
+train_save_folder = "./VAE_train/2d_anat/human_train_4/"
+
+os.makedirs(train_save_folder + "/test_images", exist_ok=True)
 
 # file to save losses
 csv_file = 'loss_log.csv'
@@ -32,15 +38,38 @@ csv_file = 'loss_log.csv'
 start_epoch = 0
 
 # num epoch to train for
-num_epochs = 500
+num_epochs = 1000
 
 # how often to save model checkpoints and images
 save_imgs = True
-save_freq = 20
+save_imgs_freq = 50
+save_model_freq = 50
+
+lr=1e-4
+batch_size= 16
 
 ###################################################################################################################
 ################################################################################################################### finish setting some params
 
+# Loss function for VAE
+def loss_func(imgs, recons, means, log_vars):
+    criterion = nn.CrossEntropyLoss()
+    recon = criterion(recons, imgs) # computes average per voxel (in CVAE they use this instead to sum over all voxels)
+
+    BS = batch_size
+    #num_voxels = 120*120*128 # NOTE: update for 3D
+    num_voxels = 120*120 # NOTE: update for 3D
+    beta = 10
+    KLD = (-0.5 * torch.sum(1 + log_vars - means.pow(2) - log_vars.exp())) / (num_voxels * BS)
+
+    return recon + beta*KLD
+
+def reparameterization(means, log_vars):
+    # move random vars sampled from a normal dist to size log_vars to device
+    epsilon = torch.randn_like(log_vars).to(device) 
+    std = torch.exp(0.5 * log_vars)
+    z = means + std * epsilon
+    return z
 
 class Segmentation3DDataset(Dataset):
     def __init__(self, image_paths, transform=None):
@@ -54,106 +83,71 @@ class Segmentation3DDataset(Dataset):
         image = sitk.ReadImage(self.image_paths[idx])
         image = sitk.GetArrayFromImage(image)
 
-        # Add channel dimension if needed (C x D x H x W)
-        if image.ndim == 3:
-            image = np.expand_dims(image, axis=0)
-        
+        image = np.expand_dims(image, axis=0)
         if self.transform:
             image = self.transform(image)
 
         return torch.from_numpy(image).to(torch.float)
-    
-class Encoder_VAE(nn.Module):
-    def __init__(self, n_downsample, n_res, input_dim, dim, norm, activ, pad_type):
-        super(Encoder_VAE, self).__init__()
-        self.model = []
-        self.model += [Conv3dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)]
-        # downsampling blocks
-        for i in range(n_downsample):
-            self.model += [Conv3dBlock(dim, 2 * dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)]
-            dim *= 2
-        # residual blocks
-        self.model += [ResBlocks(n_res, dim, norm=norm, activation=activ, pad_type=pad_type)]
 
-        latent_dim = 1024
-        flattened_dim = 16*30*30*32
+two_d = False
 
-        self.model += [nn.Flatten(), nn.Linear(flattened_dim, latent_dim), nn.LayerNorm(latent_dim), nn.ReLU()]
+# ===== Your consistent color setup =====
+base_colors = plt.cm.get_cmap('tab20').colors  # 20 RGBA colors
+n_labels = 300
+repeated_colors = np.tile(base_colors, (n_labels // 20 + 1, 1))[:n_labels]
+cmap = ListedColormap(repeated_colors)
+n_labels = 270
+norm = BoundaryNorm(np.arange(n_labels + 1), cmap.N)
 
-        self.output_dim = dim
+# Manually set label 0 to white
+colors_with_white_bg = cmap.colors
+colors_with_white_bg[0] = (1.0, 1.0, 1.0)  # RGB white
+cmap = ListedColormap(colors_with_white_bg)
 
-        # NOTE: dim might be incorrect here??
-        self.inplace = nn.Linear(latent_dim, latent_dim)
+def __write_images(image_outputs, display_image_num, file_name):
+    imgs, recons = image_outputs
 
-        self.model = nn.Sequential(*self.model)
+    # If 3D volumes: [B, D, H, W] → take middle slice
+    if imgs.ndim == 4:
+        slice_idx = imgs.shape[1] // 2
+        imgs = torch.stack([img[slice_idx] for img in imgs[:display_image_num]])
+        recons = torch.stack([img[slice_idx] for img in recons[:display_image_num]])
+    else:
+        imgs = imgs[:display_image_num]
+        recons = recons[:display_image_num]
 
-    def forward(self, x):
-        out = self.model(x)
-        means = self.inplace(out)
-        log_vars = self.inplace(out) # why was it called log vars? Probs cuz of how it's used in KL divergence
-        return means, log_vars
-    
-class Reshape(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.shape = (16, 32, 30, 30)  # e.g., (-1, 512) or (batch_size, channels, height, width)
+    # Apply discrete colormap and return RGB tensors
+    def apply_cmap_rgb(tensor):
+        arr = tensor.cpu().numpy().astype(np.int32)
+        rgb_list = []
+        for img in arr:
+            rgb_img = cmap(norm(img))[..., :3]  # drop alpha
+            rgb_tensor = torch.from_numpy(rgb_img).permute(2, 0, 1)  # [3, H, W]
+            rgb_list.append(rgb_tensor)
+        return torch.stack(rgb_list)
 
-    def forward(self, x):
-        return x.reshape(x.size(0), *self.shape)  # keeps batch dim intact
+    imgs_rgb = apply_cmap_rgb(imgs)
+    recons_rgb = apply_cmap_rgb(recons)
 
-class Decoder_VAE(nn.Module):
-    def __init__(self, n_upsample, n_res, dim, output_dim, res_norm='in', activ='relu', pad_type='zero'): # NOTE: updated normalization to in to not have to compute weight and bias externally
-        super(Decoder_VAE, self).__init__()
+    # Create grids
+    grid_in = vutils.make_grid(imgs_rgb, nrow=display_image_num, padding=2)
+    grid_rec = vutils.make_grid(recons_rgb, nrow=display_image_num, padding=2)
 
-        self.model = []
+    # Stack vertically
+    full_grid = torch.cat([grid_in, grid_rec], dim=1)
 
-        latent_dim = 1024
-        flattened_dim = 16*30*30*32
-
-        self.model += [nn.Linear(latent_dim, flattened_dim), nn.LayerNorm(flattened_dim), nn.ReLU(), Reshape()]
-        
-        # AdaIN residual blocks # NOTE: changed!!
-        self.model += [ResBlocks(n_res, dim, res_norm, activ, pad_type=pad_type)]
-        # upsampling blocks
-        for i in range(n_upsample):
-            self.model += [nn.Upsample(scale_factor=2),
-                           Conv3dBlock(dim, dim // 2, 5, 1, 2, norm='ln', activation=activ, pad_type=pad_type)] # NOTE: could update to instance norm since only a batch size of 2 -> don't want to normalize over full layer??
-            dim //= 2
-        # use reflection padding in the last conv layer
-        self.model += [Conv3dBlock(dim, output_dim, 7, 1, 3, norm='none', activation='none', pad_type=pad_type)] 
-        self.model = nn.Sequential(*self.model)
-
-    def forward(self, x):
-        return self.model(x)
-    
-# Loss function for VAE
-def loss_func(imgs, recons, means, log_vars):
-    criterion = nn.CrossEntropyLoss()
-    recon = criterion(recons, imgs) # computes average per voxel (in CVAE they use this instead to sum over all voxels)
-
-    BS = 4
-    num_voxels = 1843200
-    beta = 10
-    KLD = (-0.5*torch.sum(1 + log_vars - means.pow(2) - log_vars.exp())) / num_voxels*BS
-
-    return recon + beta*KLD
-
-def reparameterization(means, log_vars):
-    # move random vars sampled from a normal dist to size log_vars to device
-    epsilon = torch.randn_like(log_vars).to(device) 
-    z = means + log_vars*epsilon
-    return z
+    vutils.save_image(full_grid, file_name)
     
 # Create dataset and dataloader
 train_dataset = Segmentation3DDataset(image_paths=train_paths)
-train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
 val_dataset = Segmentation3DDataset(image_paths=val_paths)
 val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
 # Initialize model
-encoder = Encoder_VAE(n_downsample=2, n_res=4, input_dim=1, dim=4, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
-decoder = Decoder_VAE(n_upsample=2, n_res=4, dim=encoder.output_dim, output_dim=4)
+encoder = Encoder_VAE(n_downsample=2, n_res=4, input_dim=1, dim=8, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+decoder = Decoder_VAE(n_upsample=2, n_res=4, dim=encoder.output_dim, output_dim=271)
 
 # Move to GPU if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -167,9 +161,14 @@ if start_epoch != 0:
 
 # Loss function
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=1e-4)
+optimizer = optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=lr)
 
 save_loss = []
+
+# for saving images during training
+display_size = 16 # num images to display
+
+
 
 print("Start training!!")
 for epoch in range(start_epoch, start_epoch + num_epochs + 1):
@@ -193,9 +192,6 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
         loss = loss_func(batch.squeeze(1).long(), recon, means, log_vars)
 
 
-        # Compute loss
-        loss = criterion(recon, batch.squeeze().to(torch.long))
-
         # Backprop
         optimizer.zero_grad()
         loss.backward()
@@ -207,24 +203,48 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
     decoder.eval()
     val_loss = 0
 
+    img_to_save = []
+    recon_to_save = []
+
     with torch.no_grad():
         for i, val_batch in enumerate(val_loader):
+            val_batch = val_batch.to(device)
 
-            means, log_vars = encoder(batch)
+            means, log_vars = encoder(val_batch)
             # get latent vectors - sampled from learned dists
             z = reparameterization(means, log_vars)
             recon = decoder(z)
             # Compute loss
-            loss = loss_func(batch.squeeze(1).long(), recon, means, log_vars)
+            loss = loss_func(val_batch.squeeze(1).long(), recon, means, log_vars)
 
             val_loss += loss.item()
 
             # save a few test images
-            if save_imgs and (epoch % save_freq == 0) and i < 3:
-                recon = torch.argmax(recon, dim=1)
-                recon_img = sitk.GetImageFromArray(np.array(recon.detach().cpu()).squeeze())
-                sitk.WriteImage(recon_img, train_save_folder + "test_images/recon_" + val_paths[i].split("/")[-1].split(".")[0] + "_epoch_" + str(epoch) + ".nii")
-    
+            if save_imgs and (epoch % save_imgs_freq == 0) and i < 3:
+                recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
+                recon_to_save.append(recon) # might just be a shallow copy
+
+                #recon_img = sitk.GetImageFromArray(np.array(recon))
+                # save a few nifty image reconstructions - use for analysis
+                #sitk.WriteImage(recon_img, train_save_folder + "test_images/recon_" + val_paths[i].split("/")[-1].split(".")[0] + "_epoch_" + str(epoch) + ".nii")
+
+                # to display
+                img_to_save.append(val_batch)
+
+            if save_imgs and i >= 3 and i < display_size and (epoch % save_imgs_freq == 0):
+                recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
+                recon_to_save.append(recon)
+                img_to_save.append(val_batch)
+
+        # save a png of some reconstructions - to observe during training
+        if save_imgs and epoch % save_imgs_freq == 0:
+            img_to_save = torch.stack(img_to_save).squeeze()
+            recon_to_save = torch.stack(recon_to_save)
+
+            print("save images...")
+            __write_images([img_to_save, recon_to_save], display_size, train_save_folder + "test_images/recons_epoch_" + str(epoch) + ".png")
+
+
     train_loss = train_loss / len(train_loader)
     val_loss = val_loss / len(val_loader)
     elapsed_time = time.time() - epoch_start_time
@@ -236,7 +256,7 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
         writer.writerow([epoch, train_loss, val_loss])  # Writes a single row with two values
 
     # save model checkpoint
-    if epoch % save_freq == 0:
+    if epoch % save_model_freq == 0:
         checkpoint = {
             'epoch': epoch,
             'encoder_state_dict': encoder.state_dict(),
