@@ -14,7 +14,23 @@ except ImportError: # will be 3.x series
 # Encoder and Decoders
 ##################################################################################
 
-two_d = True # NOTE: 2D vs 3D
+# HARDCODE FOR NOW
+two_d = False # NOTE: 2D vs 3D
+n_downsample = 2
+dim=8
+img_x = 128
+img_y = 120
+img_z = 120
+latent_dim = 5000
+
+
+if two_d:
+    flattened_dim = dim*2**n_downsample*img_x/2**n_downsample*img_y/2**n_downsample
+else:
+    flattened_dim = dim*2**n_downsample*img_x/2**n_downsample*img_y/2**n_downsample*img_z/2**n_downsample
+
+flattened_dim = int(flattened_dim)
+
 
 
 # They had a Style and Content encoder - this content encoder just had resnet blocks instead
@@ -92,12 +108,6 @@ class Encoder_VAE(nn.Module):
         # residual blocks
         self.model += [ResBlocks(n_res, dim, norm=norm, activation=activ, pad_type=pad_type)]
 
-        # latent_dim = 128
-        # flattened_dim = 16*15*15*16 # NOTE: update for 3D
-
-        latent_dim = 8192
-        flattened_dim = 32*30*30 # NOTE: update for 3D
-
         # NOTE: extra to map down to lower dim
         self.model += [nn.Flatten(), nn.Linear(flattened_dim, latent_dim), nn.LayerNorm(latent_dim), nn.ReLU()]
 
@@ -119,7 +129,7 @@ class Reshape(nn.Module):
     def __init__(self):
         super().__init__()
         #self.shape = (16, 16, 15, 15)  # e.g., (-1, 512) or (batch_size, channels, height, width)
-        self.shape = (32, 30, 30)  # e.g., (-1, 512) or (batch_size, channels, height, width)
+        self.shape = (dim*2**n_downsample, int(img_x/2**n_downsample), int(img_y/2**n_downsample), int(img_z/2**n_downsample))  # e.g., (-1, 512) or (batch_size, channels, height, width)
 
     def forward(self, x):
         return x.reshape(x.size(0), *self.shape)  # keeps batch dim intact
@@ -129,12 +139,6 @@ class Decoder_VAE(nn.Module):
         super(Decoder_VAE, self).__init__()
 
         self.model = []
-
-        # latent_dim = 128 
-        # flattened_dim = 16*15*15*16
-
-        latent_dim = 8192 
-        flattened_dim = 32*30*30
 
         self.model += [nn.Linear(latent_dim, flattened_dim), nn.LayerNorm(flattened_dim), nn.ReLU(), Reshape()]
         #self.model += [Reshape()]
