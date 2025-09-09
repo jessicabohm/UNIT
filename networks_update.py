@@ -14,14 +14,14 @@ except ImportError: # will be 3.x series
 # Encoder and Decoders
 ##################################################################################
 
-# HARDCODE FOR NOW
+# HARDCORE FOR NOW
 two_d = False # NOTE: 2D vs 3D
 n_downsample = 2
-dim=8
+dim=4
 img_x = 128
 img_y = 120
 img_z = 120
-latent_dim = 5000
+latent_dim = 2000
 
 
 if two_d:
@@ -114,15 +114,16 @@ class Encoder_VAE(nn.Module):
         self.output_dim = dim
 
         # NOTE: dim might be incorrect here??
-        self.inplace = nn.Linear(latent_dim, latent_dim)
+        #self.inplace = nn.Linear(latent_dim, latent_dim)
         #self.inplace = nn.Linear(flattened_dim, flattened_dim)
-
+        self.fc_mu = nn.Linear(latent_dim, latent_dim)       # outputs means
+        self.fc_logvar = nn.Linear(latent_dim, latent_dim)   # outputs log variances
         self.model = nn.Sequential(*self.model)
 
     def forward(self, x):
         out = self.model(x)
-        means = self.inplace(out)
-        log_vars = self.inplace(out) # why was it called log vars? Probs cuz of how it's used in KL divergence
+        means = self.fc_mu(out) # self.inplace(out)
+        log_vars = self.fc_logvar(out) #self.inplace(out) # why was it called log vars? Probs cuz of how it's used in KL divergence
         return means, log_vars
     
 class Reshape(nn.Module):
