@@ -18,9 +18,9 @@ except ImportError: # will be 3.x series
 two_d = False # NOTE: 2D vs 3D
 n_downsample = 2
 dim=4
-img_x = 128
-img_y = 120
-img_z = 120
+img_x = 120
+img_y = 128
+img_z = 128
 latent_dim = 2000
 
 
@@ -109,15 +109,16 @@ class Encoder_VAE(nn.Module):
         self.model += [ResBlocks(n_res, dim, norm=norm, activation=activ, pad_type=pad_type)]
 
         # NOTE: extra to map down to lower dim
-        self.model += [nn.Flatten(), nn.Linear(flattened_dim, latent_dim), nn.LayerNorm(latent_dim), nn.ReLU()]
+        self.model += [nn.Flatten()]
 
         self.output_dim = dim
 
         # NOTE: dim might be incorrect here??
         #self.inplace = nn.Linear(latent_dim, latent_dim)
         #self.inplace = nn.Linear(flattened_dim, flattened_dim)
-        self.fc_mu = nn.Linear(latent_dim, latent_dim)       # outputs means
-        self.fc_logvar = nn.Linear(latent_dim, latent_dim)   # outputs log variances
+        
+        self.fc_mu = nn.Linear(flattened_dim, latent_dim)       # outputs means
+        self.fc_logvar = nn.Linear(flattened_dim, latent_dim)   # outputs log variances
         self.model = nn.Sequential(*self.model)
 
     def forward(self, x):
@@ -142,8 +143,7 @@ class Decoder_VAE(nn.Module):
         self.model = []
 
         self.model += [nn.Linear(latent_dim, flattened_dim), nn.LayerNorm(flattened_dim), nn.ReLU(), Reshape()]
-        #self.model += [Reshape()]
-        
+ 
         # AdaIN residual blocks # NOTE: changed!!
         self.model += [ResBlocks(n_res, dim, res_norm, activ, pad_type=pad_type)]
 

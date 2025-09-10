@@ -12,7 +12,7 @@ import csv
 import time
 from networks_update import *
 
-batch_size = 4 
+batch_size = 1 
 # Loss function for VAE
 def loss_func(imgs, recons, means, log_vars):
     criterion = nn.CrossEntropyLoss()
@@ -20,7 +20,7 @@ def loss_func(imgs, recons, means, log_vars):
 
     BS = batch_size
     #num_voxels = 120*120*128 # NOTE: update for 3D
-    num_voxels = 120*120#*128 # NOTE: update for 3D
+    num_voxels = 120*120*128 # NOTE: update for 3D
     beta = 10
     KLD = (-0.5 * torch.sum(1 + log_vars - means.pow(2) - log_vars.exp())) / (num_voxels * BS)
 
@@ -63,13 +63,13 @@ class Segmentation3DDataset(Dataset):
 
 # Dataset path
 
-test_folder = "./datasets/anat_2d/human_test/"
+test_folder = "./datasets/3d_anat/human_test/"
 test_files = os.listdir(test_folder)
 test_paths = [test_folder + file_name for file_name in test_files]
 
 # folder to save model checkpoints
 #train_save_folder = "./VAE_train/anat/mouse_train_1/"
-train_save_folder = "./VAE_train/2d_anat/human_train_4/"
+train_save_folder = "./VAE_train/3d_anat/human_train_1/"
 
 # checkpoint to load
 epoch = 150
@@ -91,12 +91,12 @@ test_loader = DataLoader(test_dataset, batch_size=1)
 # Initialize model
 
 # NOTE: current anat train:
-encoder = Encoder_VAE(n_downsample=2, n_res=4, input_dim=1, dim=8, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+encoder = Encoder_VAE(n_downsample=2, n_res=4, input_dim=1, dim=4, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
 decoder = Decoder_VAE(n_upsample=2, n_res=4, dim=encoder.output_dim, output_dim=271)
 
 # load from checkpoint to test
-encoder.load_state_dict(torch.load(train_save_folder + "checkpoint_epoch_" + str(epoch))['encoder_state_dict'])
-decoder.load_state_dict(torch.load(train_save_folder + "checkpoint_epoch_" + str(epoch))['decoder_state_dict'])
+encoder.load_state_dict(torch.load(train_save_folder + "best_model.pth")['encoder_state_dict'])
+decoder.load_state_dict(torch.load(train_save_folder + "best_model.pth")['decoder_state_dict'])
 
 # Move to GPU if available
 if gpu:

@@ -8,68 +8,13 @@ from torch.utils.data import DataLoader
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from networks_update import *
+from networks_update import Encoder, Decoder
 import csv
 import time
 import torchvision.utils as vutils
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 
-
-# Dataset path
-train_folder = "./datasets/3d_anat_align/human_train/"
-train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
-
-train_paths = train_paths
-
-val_folder = "./datasets/3d_anat_align/human_test/"
-val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
-val_paths.sort()
-
-# folder to save model checkpoints
-train_save_folder = "./VAE_train/3d_anat/human_train_9/"
-
-os.makedirs(train_save_folder + "/test_images", exist_ok=True)
-
-# file to save losses
-csv_file = 'loss_log.csv'
-
-# epoch to load from
-start_epoch = 0
-
-# num epoch to train for
-num_epochs = 1000
-
-# how often to save model checkpoints and images
-save_imgs = True
-save_imgs_freq = 5
-save_model_freq = 5
-
-lr=1e-4
-batch_size= 4
-
-###################################################################################################################
-################################################################################################################### finish setting some params
-
-# Loss function for VAE
-def loss_func(imgs, recons, means, log_vars):
-    criterion = nn.CrossEntropyLoss()
-    recon = criterion(recons, imgs) # computes average per voxel (in CVAE they use this instead to sum over all voxels)
-
-    BS = batch_size
-    num_voxels = 120*120*128 # NOTE: update for 3D
-    #num_voxels = 64*64*64 # NOTE: update for 2D
-    beta = 10
-    KLD = (-0.5 * torch.sum(1 + log_vars - means.pow(2) - log_vars.exp())) / (num_voxels * BS)
-
-    return recon + beta*KLD
-
-def reparameterization(means, log_vars):
-    # move random vars sampled from a normal dist to size log_vars to device
-    epsilon = torch.randn_like(log_vars).to(device) 
-    std = torch.exp(0.5 * log_vars)
-    z = means + std * epsilon
-    return z
 
 class Segmentation3DDataset(Dataset):
     def __init__(self, image_paths, transform=None):
@@ -82,14 +27,20 @@ class Segmentation3DDataset(Dataset):
     def __getitem__(self, idx):
         image = sitk.ReadImage(self.image_paths[idx])
         image = sitk.GetArrayFromImage(image)
+        # # NOTE: just for a quick train test - pad the image to 144^3
+        # pad_x = 4
+        # pad_y = 4
+        # pad_z = 12
+        # image = np.pad(image, ((pad_x, pad_x), (pad_y, pad_y)))
 
+        # Add channel dimension
         image = np.expand_dims(image, axis=0)
+        
         if self.transform:
             image = self.transform(image)
 
         return torch.from_numpy(image).to(torch.float)
-
-two_d = False
+    
 
 # ===== Your consistent color setup =====
 base_colors = plt.cm.get_cmap('tab20').colors  # 20 RGBA colors
@@ -138,48 +89,52 @@ def __write_images(image_outputs, display_image_num, file_name):
 
     vutils.save_image(full_grid, file_name)
 
-class EarlyStopping:
-    def __init__(self, patience=10, verbose=True, save_path="best_model.pth"):
-        """
-        patience: how many epochs to wait after last improvement
-        verbose: print updates
-        save_path: where to save the best model
-        """
-        self.patience = patience
-        self.counter = 0
-        self.best_loss = np.inf
-        self.early_stop = False
-        self.verbose = verbose
-        self.save_path = save_path
 
-    def __call__(self, val_loss, model_dict):
-        if val_loss < self.best_loss:
-            self.best_loss = val_loss
-            self.counter = 0
-            self.save_checkpoint(model_dict)
-        else:
-            self.counter += 1
-            if self.verbose:
-                print(f"EarlyStopping counter: {self.counter}/{self.patience}")
-            if self.counter >= self.patience:
-                self.early_stop = True
+# Dataset path
+train_folder = "./datasets/3d_anat/mouse_train/"
+train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
-    def save_checkpoint(self, model_dict):
-        if self.verbose:
-            print(f"Validation loss improved → {self.best_loss:.4f}. Saving model...")
-        torch.save(model_dict, self.save_path)
+train_paths = train_paths
 
+val_folder = "./datasets/3d_anat/mouse_test/"
+val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
+val_paths.sort()
+
+# folder to save model checkpoints
+train_save_folder = "./save_anat_e_d/mouse_train_3/"
+os.makedirs(train_save_folder, exist_ok=True)
+
+
+# file to save losses
+csv_file = 'loss_log.csv'
+
+# epoch to load from
+start_epoch = 0
+
+# num epoch to train for
+num_epochs = 1000
+
+# how often to save model checkpoints and images
+save_imgs = True
+save_imgs_freq = 25
+save_model_freq = 25
+
+###################################################################################################################
+################################################################################################################### finish setting some params
 
 # Create dataset and dataloader
 train_dataset = Segmentation3DDataset(image_paths=train_paths)
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=6, shuffle=True, num_workers=4, pin_memory=True)
 
 val_dataset = Segmentation3DDataset(image_paths=val_paths)
-val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
+val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=4, pin_memory=True)
+
+# for saving images during training
+display_size = 16 # num images to display
 
 # Initialize model
-encoder = Encoder_VAE(n_downsample=2, n_res=1, input_dim=1, dim=4, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
-decoder = Decoder_VAE(n_upsample=2, n_res=1, dim=encoder.output_dim, output_dim=271)
+encoder = Encoder(n_downsample=3, n_res=4, input_dim=1, dim=4, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+decoder = Decoder(n_upsample=3, n_res=4, dim=encoder.output_dim, output_dim=271) # output_dim=# channels in seg (4/271 - since include background)
 
 # Move to GPU if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -193,15 +148,11 @@ if start_epoch != 0:
 
 # Loss function
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=lr)
+optimizer = optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=1e-4)
 
 save_loss = []
 
-# for saving images during training
-display_size = 16 # num images to display
-
-early_stopping = EarlyStopping(patience=5, save_path=train_save_folder + "best_model.pth")
-
+os.makedirs(train_save_folder + "test_images/" , exist_ok=True)
 
 print("Start training!!")
 for epoch in range(start_epoch, start_epoch + num_epochs + 1):
@@ -214,16 +165,11 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
         batch = batch.to(device)  # (B, C, D, H, W)
 
         # Forward pass
-        means, log_vars = encoder(batch)
-
-        # get latent vectors - sampled from learned dists
-        z = reparameterization(means, log_vars)
-
+        z = encoder(batch)
         recon = decoder(z)
 
         # Compute loss
-        loss = loss_func(batch.squeeze(1).long(), recon, means, log_vars)
-
+        loss = criterion(recon, batch.squeeze(1).long())
 
         # Backprop
         optimizer.zero_grad()
@@ -241,15 +187,9 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
 
     with torch.no_grad():
         for i, val_batch in enumerate(val_loader):
-            val_batch = val_batch.to(device)
-
-            means, log_vars = encoder(val_batch)
-            # get latent vectors - sampled from learned dists
-            z = reparameterization(means, log_vars)
+            z = encoder(val_batch.float().to(device))
             recon = decoder(z)
-            # Compute loss
-            loss = loss_func(val_batch.squeeze(1).long(), recon, means, log_vars)
-
+            loss = criterion(recon, val_batch.squeeze(1).long().to(device))
             val_loss += loss.item()
 
             # save a few test images
@@ -257,9 +197,9 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
                 recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
                 recon_to_save.append(recon) # might just be a shallow copy
 
-                #recon_img = sitk.GetImageFromArray(np.array(recon))
+                recon_img = sitk.GetImageFromArray(np.array(recon))
                 # save a few nifty image reconstructions - use for analysis
-                #sitk.WriteImage(recon_img, train_save_folder + "test_images/recon_" + val_paths[i].split("/")[-1].split(".")[0] + "_epoch_" + str(epoch) + ".nii")
+                sitk.WriteImage(recon_img, train_save_folder + "test_images/recon_" + val_paths[i].split("/")[-1].split(".")[0] + "_epoch_" + str(epoch) + ".nii")
 
                 # to display
                 img_to_save.append(val_batch)
@@ -277,7 +217,6 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
             print("save images...")
             __write_images([img_to_save, recon_to_save], display_size, train_save_folder + "test_images/recons_epoch_" + str(epoch) + ".png")
 
-
     train_loss = train_loss / len(train_loader)
     val_loss = val_loss / len(val_loader)
     elapsed_time = time.time() - epoch_start_time
@@ -287,9 +226,9 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
     with open(train_save_folder + 'loss_log.csv', mode='a', newline='') as file:
         writer = csv.writer(file)
         writer.writerow([epoch, train_loss, val_loss])  # Writes a single row with two values
-   
+
+    # save model checkpoint
     if epoch % save_model_freq == 0:
-        # model dict for saving
         checkpoint = {
             'epoch': epoch,
             'encoder_state_dict': encoder.state_dict(),
@@ -299,22 +238,5 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
             'test_loss': val_loss,
         }
 
-        # check early stopping
-        early_stopping(val_loss, checkpoint)
-        if early_stopping.early_stop:
-            print("Early stopping triggered. Stopping training.")
-            break
-
-#    # save model checkpoint
-#    if epoch % save_model_freq == 0:
-#        checkpoint = {
-#            'epoch': epoch,
-#            'encoder_state_dict': encoder.state_dict(),
-#            'decoder_state_dict': decoder.state_dict(),
-#            'optimizer_state_dict': optimizer.state_dict(),
-#            'train_loss': train_loss,
-#            'test_loss': val_loss,
-#        }
-#
-#        torch.save(checkpoint, train_save_folder + "checkpoint_epoch_" + str(epoch))
+        torch.save(checkpoint, train_save_folder + "checkpoint_epoch_" + str(epoch))
 
