@@ -1,7 +1,7 @@
 #! /bin/bash
 # ====================================
 #SBATCH --job-name=train_ae
-#SBATCH --output=crc_train_vae_anat_human_9-%j.out
+#SBATCH --output=train_vae_anat_human_64_2-%j.out
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4

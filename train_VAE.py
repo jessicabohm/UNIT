@@ -17,17 +17,17 @@ from matplotlib.colors import ListedColormap, BoundaryNorm
 
 
 # Dataset path
-train_folder = "./datasets/3d_anat_align/human_train/"
+train_folder = "./datasets/3d_anat_align_64/human_train/"
 train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
 train_paths = train_paths
 
-val_folder = "./datasets/3d_anat_align/human_test/"
+val_folder = "./datasets/3d_anat_align_64/human_test/"
 val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./VAE_train/3d_anat/human_train_9/"
+train_save_folder = "./VAE_train/3d_anat/human_train_64_2/"
 
 os.makedirs(train_save_folder + "/test_images", exist_ok=True)
 
@@ -57,8 +57,8 @@ def loss_func(imgs, recons, means, log_vars):
     recon = criterion(recons, imgs) # computes average per voxel (in CVAE they use this instead to sum over all voxels)
 
     BS = batch_size
-    num_voxels = 120*120*128 # NOTE: update for 3D
-    #num_voxels = 64*64*64 # NOTE: update for 2D
+    #num_voxels = 120*120*128 # NOTE: update for 3D
+    num_voxels = 64*64*64 # NOTE: update for 2D
     beta = 10
     KLD = (-0.5 * torch.sum(1 + log_vars - means.pow(2) - log_vars.exp())) / (num_voxels * BS)
 
@@ -178,7 +178,7 @@ val_dataset = Segmentation3DDataset(image_paths=val_paths)
 val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
 # Initialize model
-encoder = Encoder_VAE(n_downsample=2, n_res=1, input_dim=1, dim=4, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+encoder = Encoder_VAE(n_downsample=2, n_res=1, input_dim=1, dim=8, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
 decoder = Decoder_VAE(n_upsample=2, n_res=1, dim=encoder.output_dim, output_dim=271)
 
 # Move to GPU if available
