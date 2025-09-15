@@ -19,8 +19,8 @@ def loss_func(imgs, recons, means, log_vars):
     recon = criterion(recons, imgs) # computes average per voxel (in CVAE they use this instead to sum over all voxels)
 
     BS = batch_size
+    num_voxels = 64*64*64 # NOTE: update for 3D
     #num_voxels = 120*120*128 # NOTE: update for 3D
-    num_voxels = 120*120*128 # NOTE: update for 3D
     beta = 10
     KLD = (-0.5 * torch.sum(1 + log_vars - means.pow(2) - log_vars.exp())) / (num_voxels * BS)
 
@@ -63,19 +63,19 @@ class Segmentation3DDataset(Dataset):
 
 # Dataset path
 
-test_folder = "./datasets/3d_anat/human_test/"
+test_folder = "./datasets/3d_anat_align_64/human_test/"
 test_files = os.listdir(test_folder)
 test_paths = [test_folder + file_name for file_name in test_files]
 
 # folder to save model checkpoints
 #train_save_folder = "./VAE_train/anat/mouse_train_1/"
-train_save_folder = "./VAE_train/3d_anat/human_train_1/"
+train_save_folder = "./VAE_train/3d_anat/arc_human_train_64_2/"
 
 # checkpoint to load
 epoch = 150
 
 # folder to save reconstructed images to
-recon_folder = "recon_images_epoch_" + str(epoch)
+recon_folder = "recon_images_best"
 os.makedirs(train_save_folder + recon_folder, exist_ok=True)
 
 # where to eval (NOTE: wayyyy faster with gpu - 6 sec vs 2 min 30 sec)
@@ -91,8 +91,8 @@ test_loader = DataLoader(test_dataset, batch_size=1)
 # Initialize model
 
 # NOTE: current anat train:
-encoder = Encoder_VAE(n_downsample=2, n_res=4, input_dim=1, dim=4, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
-decoder = Decoder_VAE(n_upsample=2, n_res=4, dim=encoder.output_dim, output_dim=271)
+encoder = Encoder_VAE(n_downsample=2, n_res=1, input_dim=1, dim=8, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+decoder = Decoder_VAE(n_upsample=2, n_res=1, dim=encoder.output_dim, output_dim=271)
 
 # load from checkpoint to test
 encoder.load_state_dict(torch.load(train_save_folder + "best_model.pth")['encoder_state_dict'])

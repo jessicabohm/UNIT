@@ -17,10 +17,10 @@ except ImportError: # will be 3.x series
 # HARDCORE FOR NOW
 two_d = False # NOTE: 2D vs 3D
 n_downsample = 2
-dim=8
-img_x = 64 #128
-img_y = 64 #120
-img_z = 64 #120
+dim=4
+img_x = 128
+img_y = 120
+img_z = 120
 latent_dim = 2000
 
 
@@ -109,16 +109,19 @@ class Encoder_VAE(nn.Module):
         self.model += [ResBlocks(n_res, dim, norm=norm, activation=activ, pad_type=pad_type)]
 
         # NOTE: extra to map down to lower dim
-        self.model += [nn.Flatten(), nn.Linear(flattened_dim, latent_dim), nn.LayerNorm(latent_dim), nn.ReLU()]
+        #self.model += [nn.Flatten(), nn.Linear(flattened_dim, latent_dim), nn.LayerNorm(latent_dim), nn.ReLU()]
 
         self.output_dim = dim
 
-        # NOTE: dim might be incorrect here??
-        #self.inplace = nn.Linear(latent_dim, latent_dim)
-        #self.inplace = nn.Linear(flattened_dim, flattened_dim)
-        
-        self.fc_mu = nn.Linear(latent_dim, latent_dim)       # outputs means
-        self.fc_logvar = nn.Linear(latent_dim, latent_dim)   # outputs log variances
+        # Convolutional mean & logvar heads (preserve spatial structure!)
+        if two_d:
+            self.fc_mu     = nn.Conv2d(dim, dim, 1)
+            self.fc_logvar = nn.Conv2d(dim, dim, 1)
+        else:
+            self.fc_mu     = nn.Conv3d(dim, dim, 1)
+            self.fc_logvar = nn.Conv3d(dim, dim, 1)
+
+
         self.model = nn.Sequential(*self.model)
 
     def forward(self, x):
@@ -126,6 +129,7 @@ class Encoder_VAE(nn.Module):
         means = self.fc_mu(out) # self.inplace(out)
         log_vars = self.fc_logvar(out) #self.inplace(out) # why was it called log vars? Probs cuz of how it's used in KL divergence
         return means, log_vars
+    
     
 class Reshape(nn.Module):
     def __init__(self):
@@ -142,7 +146,7 @@ class Decoder_VAE(nn.Module):
 
         self.model = []
 
-        self.model += [nn.Linear(latent_dim, flattened_dim), nn.LayerNorm(flattened_dim), nn.ReLU(), Reshape()]
+        # self.model += [nn.Linear(latent_dim, flattened_dim), nn.LayerNorm(flattened_dim), nn.ReLU(), Reshape()]
  
         # AdaIN residual blocks # NOTE: changed!!
         self.model += [ResBlocks(n_res, dim, res_norm, activ, pad_type=pad_type)]
