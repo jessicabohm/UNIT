@@ -109,18 +109,20 @@ class Encoder_VAE(nn.Module):
         self.model += [ResBlocks(n_res, dim, norm=norm, activation=activ, pad_type=pad_type)]
 
         # NOTE: extra to map down to lower dim
-        #self.model += [nn.Flatten(), nn.Linear(flattened_dim, latent_dim), nn.LayerNorm(latent_dim), nn.ReLU()]
+        self.model += [nn.Flatten(), nn.Linear(flattened_dim, latent_dim), nn.LayerNorm(latent_dim), nn.ReLU()]
 
         self.output_dim = dim
 
-        # Convolutional mean & logvar heads (preserve spatial structure!)
-        if two_d:
-            self.fc_mu     = nn.Conv2d(dim, dim, 1)
-            self.fc_logvar = nn.Conv2d(dim, dim, 1)
-        else:
-            self.fc_mu     = nn.Conv3d(dim, dim, 1)
-            self.fc_logvar = nn.Conv3d(dim, dim, 1)
+        # # Convolutional mean & logvar heads (preserve spatial structure!)
+        # if two_d:
+        #     self.fc_mu     = nn.Conv2d(dim, dim, 1)
+        #     self.fc_logvar = nn.Conv2d(dim, dim, 1)
+        # else:
+        #     self.fc_mu     = nn.Conv3d(dim, dim, 1)
+        #     self.fc_logvar = nn.Conv3d(dim, dim, 1)
 
+        self.fc_mu = nn.Linear(latent_dim, latent_dim)
+        self.fc_logvar = nn.Linear(latent_dim, latent_dim)
 
         self.model = nn.Sequential(*self.model)
 
@@ -146,7 +148,7 @@ class Decoder_VAE(nn.Module):
 
         self.model = []
 
-        # self.model += [nn.Linear(latent_dim, flattened_dim), nn.LayerNorm(flattened_dim), nn.ReLU(), Reshape()]
+        self.model += [nn.Linear(latent_dim, flattened_dim), nn.LayerNorm(flattened_dim), nn.ReLU(), Reshape()]
  
         # AdaIN residual blocks # NOTE: changed!!
         self.model += [ResBlocks(n_res, dim, res_norm, activ, pad_type=pad_type)]
@@ -263,7 +265,7 @@ class Conv3dBlock(nn.Module):
             assert 0, "Unsupported activation: {}".format(activation)
 
         # initialize convolution
-        self.conv = nn.Conv3d(input_dim, output_dim, kernel_size, stride, bias=self.use_bias) # NOTE: just updated this to be 3d?? is that ok??
+        self.conv = nn.Conv3d(input_dim, output_dim, kernel_size, stride, bias=self.use_bias, padding=0) # NOTE: just updated this to be 3d?? is that ok??
 
     def forward(self, x):
         x = self.conv(self.pad(x))

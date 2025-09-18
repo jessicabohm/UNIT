@@ -14,6 +14,8 @@ import time
 import torchvision.utils as vutils
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
+import scipy.stats
+from sklearn.linear_model import LinearRegression
 
 
 # Dataset path
@@ -27,9 +29,10 @@ val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./VAE_train/3d_anat/human_train_keep_shape_1/"
+train_save_folder = "./VAE_train/3d_anat/human_train_weight_1/"
 
 os.makedirs(train_save_folder + "/test_images", exist_ok=True)
+os.makedirs(train_save_folder + "/vol_plots", exist_ok=True)
 
 # file to save losses
 csv_file = 'loss_log.csv'
@@ -42,11 +45,11 @@ num_epochs = 1000
 
 # how often to save model checkpoints and images
 save_imgs = True
-save_imgs_freq = 5
-save_model_freq = 5
+save_imgs_freq = 1
+save_model_freq = 1
 
-lr=1e-4
-batch_size= 4
+lr = 1e-4
+batch_size = 1
 
 ###################################################################################################################
 ################################################################################################################### finish setting some params
@@ -168,6 +171,64 @@ class EarlyStopping:
             print(f"Validation loss improved → {self.best_loss:.4f}. Saving model...")
         torch.save(model_dict, self.save_path)
 
+# Save vol ratios plot
+def get_vol_ratio(img_arr):
+    vol_ratios = []
+    total_count = np.sum(img_arr != 0)
+
+    for i in range(251, 270 + 1):
+        vol_ratios.append(0 if total_count == 0 else np.sum(img_arr == i) / total_count)
+
+    return vol_ratios
+
+
+def plot_vol_ratios(real_vol_ratios, synth_vol_ratios, struct_names):
+    common_struct_colors = repeated_colors[251:]
+
+    fig2, axs2 = plt.subplots(2, 10, figsize=(35, 6))
+
+    for plot_index in range(2):  # Two sets: 0–9 and 10–19
+        fig, axs = plt.subplots(2, 10, figsize=(30, 5))
+        
+        for i in range(10):
+            struct_i = plot_index * 10 + i
+            if struct_i >= len(struct_names):
+                break
+            
+            color = common_struct_colors[struct_i]
+
+            real_data = real_vol_ratios[:, struct_i]
+            synth_data = synth_vol_ratios[:, struct_i]
+            combined_min = min(np.min(real_data), np.min(synth_data))
+            combined_max = max(np.max(real_data), np.max(synth_data))
+            if combined_min == combined_max:
+                continue
+                
+            # analyze matter preservation
+            r, p = scipy.stats.pearsonr(real_data, synth_data)
+
+            real_reshape = np.array(real_data).reshape(-1, 1)
+            synth_reshape = np.array(synth_data).reshape(-1, 1)
+            model = LinearRegression().fit(real_reshape, synth_reshape)
+
+            # Predict y values for the regressed line
+            y_pred = model.predict(real_reshape)
+
+            axs2[plot_index, i].scatter(real_data, synth_data, color=color)
+            axs2[plot_index, i].plot(real_data, y_pred, color="black")
+            axs2[plot_index, i].set_xlim(combined_min*0.90, combined_max*1.03)
+            axs2[plot_index, i].set_ylim(combined_min*0.90, combined_max*1.03)
+            axs2[plot_index, i].set_title(struct_names[struct_i] + "(pearsons r=" + str(round(r, 2)) + ")", fontsize=8)
+
+
+    fig2.tight_layout()
+    return fig2
+
+
+struct_names = ['lateral ventricle', 'basal forebrain', 'hippocampus', 'amygdala', 'fourth ventricle', 'thalamus', 'third ventricle', 'arbor vita of cerebellum', 'nucleus accumbens', 'globus pallidus']
+struct_names = [[struct_name + " R", struct_name + " L"] for struct_name in struct_names]
+struct_names = [n for pair in struct_names for n in pair]
+
 
 # Create dataset and dataloader
 train_dataset = Segmentation3DDataset(image_paths=train_paths)
@@ -190,8 +251,25 @@ if start_epoch != 0:
     encoder.load_state_dict(torch.load(train_save_folder + "checkpoint_epoch_" + str(start_epoch))['encoder_state_dict'])
     decoder.load_state_dict(torch.load(train_save_folder + "checkpoint_epoch_" + str(start_epoch))['decoder_state_dict'])
 
+
+# ===== Compute class weights from atlas =====
+#atlas_path = "../../MDSC689.03-Final-Project/spring term/data/anat_atlases/human_anat_seg_common.nii"  # adjust path
+atlas_path = "./human_anat_seg_common.nii"  # adjust path
+atlas_img = sitk.GetArrayFromImage(sitk.ReadImage(atlas_path))  # [D,H,W]
+
+num_classes = 271
+counts = np.bincount(atlas_img.astype(np.int64).flatten(), minlength=num_classes)
+freq = counts / counts.sum()
+
+# Inverse frequency weighting (with smoothing)
+weights = 1.0 / (freq + 1e-6)       # avoid div by 0
+weights = np.sqrt(weights)          # dampen extreme rare-class weights
+weights = weights / weights.mean()  # normalize (so average weight = 1.0)
+
+class_weights = torch.tensor(weights, dtype=torch.float32).to(device)
+
 # Loss function
-criterion = nn.CrossEntropyLoss()
+criterion = nn.CrossEntropyLoss(weight=class_weights)
 optimizer = optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=lr)
 
 save_loss = []
@@ -199,11 +277,13 @@ save_loss = []
 # for saving images during training
 display_size = 16 # num images to display
 
-early_stopping = EarlyStopping(patience=5, save_path=train_save_folder + "best_model.pth")
+early_stopping = EarlyStopping(patience=20, save_path=train_save_folder + "best_model.pth")
 
 
 print("Start training!!")
-for epoch in range(start_epoch, start_epoch + num_epochs + 1):
+accum_steps = 4
+optimizer.zero_grad()
+for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
     epoch_start_time = time.time()
     encoder.train()
     decoder.train()
@@ -223,11 +303,11 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
         # Compute loss
         loss = loss_func(batch.squeeze(1).long(), recon, means, log_vars)
 
-
         # Backprop
-        optimizer.zero_grad()
         loss.backward()
-        optimizer.step()
+        if (i+1) % accum_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
 
         train_loss += loss.item()
 
@@ -237,6 +317,9 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
 
     img_to_save = []
     recon_to_save = []
+
+    img_vol_ratios = []
+    recon_vol_ratios = []
 
     with torch.no_grad():
         for i, val_batch in enumerate(val_loader):
@@ -251,20 +334,19 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
 
             val_loss += loss.item()
 
+            recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
+
+            img_vol_ratios.append(get_vol_ratio(batch.squeeze().detach().cpu().numpy()))
+            recon_vol_ratios.append(get_vol_ratio(recon.numpy()))
+
             # save a few test images
             if save_imgs and (epoch % save_imgs_freq == 0) and i < 3:
-                recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
                 recon_to_save.append(recon) # might just be a shallow copy
-
-                #recon_img = sitk.GetImageFromArray(np.array(recon))
-                # save a few nifty image reconstructions - use for analysis
-                #sitk.WriteImage(recon_img, train_save_folder + "test_images/recon_" + val_paths[i].split("/")[-1].split(".")[0] + "_epoch_" + str(epoch) + ".nii")
 
                 # to display
                 img_to_save.append(val_batch)
 
             if save_imgs and i >= 3 and i < display_size and (epoch % save_imgs_freq == 0):
-                recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
                 recon_to_save.append(recon)
                 img_to_save.append(val_batch)
 
@@ -275,6 +357,10 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
 
             print("save images...")
             __write_images([img_to_save, recon_to_save], display_size, train_save_folder + "test_images/recons_epoch_" + str(epoch) + ".png")
+
+            # save vol ratios plot
+            fig = plot_vol_ratios(np.array(img_vol_ratios), np.array(recon_vol_ratios), struct_names)
+            fig.savefig(train_save_folder + "vol_plots/epoch_"+ str(epoch) + ".png")
 
 
     train_loss = train_loss / len(train_loader)
@@ -304,16 +390,4 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
             print("Early stopping triggered. Stopping training.")
             break
 
-#    # save model checkpoint
-#    if epoch % save_model_freq == 0:
-#        checkpoint = {
-#            'epoch': epoch,
-#            'encoder_state_dict': encoder.state_dict(),
-#            'decoder_state_dict': decoder.state_dict(),
-#            'optimizer_state_dict': optimizer.state_dict(),
-#            'train_loss': train_loss,
-#            'test_loss': val_loss,
-#        }
-#
-#        torch.save(checkpoint, train_save_folder + "checkpoint_epoch_" + str(epoch))
 
