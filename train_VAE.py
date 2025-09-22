@@ -19,17 +19,17 @@ from sklearn.linear_model import LinearRegression
 
 
 # Dataset path
-train_folder = "./datasets/3d_anat_align/human_train/"
+train_folder = "./datasets/3d_anat_align/mouse_train/"
 train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
 train_paths = train_paths
 
-val_folder = "./datasets/3d_anat_align/human_test/"
+val_folder = "./datasets/3d_anat_align/mouse_test/"
 val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./VAE_train/3d_anat/human_train_weight_1/"
+train_save_folder = "./VAE_train/3d_anat/mouse_train_best/"
 
 os.makedirs(train_save_folder + "/test_images", exist_ok=True)
 os.makedirs(train_save_folder + "/vol_plots", exist_ok=True)
@@ -45,11 +45,11 @@ num_epochs = 1000
 
 # how often to save model checkpoints and images
 save_imgs = True
-save_imgs_freq = 1
-save_model_freq = 1
+save_imgs_freq = 5
+save_model_freq = 10
 
 lr = 1e-4
-batch_size = 1
+batch_size = 5
 
 ###################################################################################################################
 ################################################################################################################### finish setting some params
@@ -269,7 +269,7 @@ weights = weights / weights.mean()  # normalize (so average weight = 1.0)
 class_weights = torch.tensor(weights, dtype=torch.float32).to(device)
 
 # Loss function
-criterion = nn.CrossEntropyLoss(weight=class_weights)
+criterion = nn.CrossEntropyLoss() # remove weights
 optimizer = optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=lr)
 
 save_loss = []

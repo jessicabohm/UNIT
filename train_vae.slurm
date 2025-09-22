@@ -1,14 +1,14 @@
 #! /bin/bash
 # ====================================
 #SBATCH --job-name=train_ae
-#SBATCH --output=train_vae_anat_human_64_2-%j.out
+#SBATCH --output=best_mouse-%j.out
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=124GB
 #SBATCH --time=0-05:00:00
 #SBATCH --gres=gpu:1
-#SBATCH --partition=crc
+#SBATCH --partition=gpu-a100
 # ====================================
 
 # Activate Conda and then the environment.

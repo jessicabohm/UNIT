@@ -14,9 +14,6 @@ import os
 import scipy.stats
 from sklearn.linear_model import LinearRegression
 import warnings
-from scipy.stats import ConstantInputWarning
-
-warnings.filterwarnings("ignore", category=ConstantInputWarning)
 
 
 latent_dim = 2000
@@ -314,7 +311,7 @@ struct_names = [n for pair in struct_names for n in pair]
 #####################################
 # Training setup - VAE
 #####################################
-train_save_folder = "./VAE_train/3d_anat/train_human_updated_1"
+train_save_folder = "./VAE_train/3d_anat/train_human_updated_1/"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Model
@@ -342,7 +339,7 @@ os.makedirs(train_save_folder + "/test_images", exist_ok=True)
 os.makedirs(train_save_folder + "/vol_plots", exist_ok=True)
 
 # ===== Compute class weights from atlas =====
-atlas_path = "../../MDSC689.03-Final-Project/spring term/data/anat_atlases/human_anat_seg_common.nii"  # adjust path
+atlas_path = "./human_anat_seg_common.nii"  # adjust path
 atlas_img = sitk.GetArrayFromImage(sitk.ReadImage(atlas_path))  # [D,H,W]
 
 num_classes = 271
