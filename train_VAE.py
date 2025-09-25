@@ -19,17 +19,17 @@ from sklearn.linear_model import LinearRegression
 
 
 # Dataset path
-train_folder = "./datasets/3d_anat_align/mouse_train/"
+train_folder = "./datasets/3d_anat_align/human_train/"
 train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
 train_paths = train_paths
 
-val_folder = "./datasets/3d_anat_align/mouse_test/"
+val_folder = "./datasets/3d_anat_align/human_test/"
 val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./VAE_train/3d_anat/mouse_train_best/"
+train_save_folder = "./VAE_train/3d_anat/human_7_test_new/"
 
 os.makedirs(train_save_folder + "/test_images", exist_ok=True)
 os.makedirs(train_save_folder + "/vol_plots", exist_ok=True)
@@ -49,7 +49,8 @@ save_imgs_freq = 5
 save_model_freq = 10
 
 lr = 1e-4
-batch_size = 5
+batch_size = 4
+accum_steps = 4 # 4
 
 ###################################################################################################################
 ################################################################################################################### finish setting some params
@@ -61,10 +62,9 @@ def loss_func(imgs, recons, means, log_vars):
 
     BS = batch_size
     num_voxels = img_x*img_y*img_z
-    beta = 10
     KLD = (-0.5 * torch.sum(1 + log_vars - means.pow(2) - log_vars.exp())) / (num_voxels * BS)
 
-    return recon + beta*KLD
+    return recon, KLD
 
 def reparameterization(means, log_vars):
     # move random vars sampled from a normal dist to size log_vars to device
@@ -253,8 +253,8 @@ if start_epoch != 0:
 
 
 # ===== Compute class weights from atlas =====
-#atlas_path = "../../MDSC689.03-Final-Project/spring term/data/anat_atlases/human_anat_seg_common.nii"  # adjust path
-atlas_path = "./human_anat_seg_common.nii"  # adjust path
+atlas_path = "../../MDSC689.03-Final-Project/spring term/data/anat_atlases/human_anat_seg_common.nii"  # adjust path
+#atlas_path = "./human_anat_seg_common.nii"  # adjust path
 atlas_img = sitk.GetArrayFromImage(sitk.ReadImage(atlas_path))  # [D,H,W]
 
 num_classes = 271
@@ -279,17 +279,20 @@ display_size = 16 # num images to display
 
 early_stopping = EarlyStopping(patience=20, save_path=train_save_folder + "best_model.pth")
 
+beta = 10
 
 print("Start training!!")
-accum_steps = 4
 optimizer.zero_grad()
 for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
     epoch_start_time = time.time()
     encoder.train()
     decoder.train()
-    train_loss = 0
 
-    for batch in train_loader:
+    train_loss = 0
+    train_recon_loss = 0
+    train_KLD_loss = 0
+
+    for batch_idx, batch in enumerate(train_loader):
         batch = batch.to(device)  # (B, C, D, H, W)
 
         # Forward pass
@@ -301,19 +304,29 @@ for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
         recon = decoder(z)
 
         # Compute loss
-        loss = loss_func(batch.squeeze(1).long(), recon, means, log_vars)
+        recon_loss, KLD_loss = loss_func(batch.squeeze(1).long(), recon, means, log_vars)
+        loss = (recon_loss + beta*KLD_loss) / accum_steps
 
         # Backprop
         loss.backward()
-        if (i+1) % accum_steps == 0:
+        if (batch_idx+1) % accum_steps == 0:
             optimizer.step()
             optimizer.zero_grad()
 
         train_loss += loss.item()
+        train_recon_loss += recon_loss.item()
+        train_KLD_loss += KLD_loss.item()
+
+    # if there are still losses to accumlate
+    if (batch_idx + 1) % accum_steps != 0:
+        optimizer.step()
+        optimizer.zero_grad()
 
     encoder.eval()
     decoder.eval()
     val_loss = 0
+    val_recon_loss = 0
+    val_KLD_loss = 0
 
     img_to_save = []
     recon_to_save = []
@@ -330,13 +343,16 @@ for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
             z = reparameterization(means, log_vars)
             recon = decoder(z)
             # Compute loss
-            loss = loss_func(val_batch.squeeze(1).long(), recon, means, log_vars)
+            recon_loss, KLD_loss = loss_func(val_batch.squeeze(1).long(), recon, means, log_vars)
+            loss = (recon_loss + beta*KLD_loss)  / accum_steps
 
             val_loss += loss.item()
+            val_recon_loss += recon_loss.item()
+            val_KLD_loss += KLD_loss.item()
 
             recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
 
-            img_vol_ratios.append(get_vol_ratio(batch.squeeze().detach().cpu().numpy()))
+            img_vol_ratios.append(get_vol_ratio(val_batch.squeeze().detach().cpu().numpy()))
             recon_vol_ratios.append(get_vol_ratio(recon.numpy()))
 
             # save a few test images
@@ -364,14 +380,19 @@ for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
 
 
     train_loss = train_loss / len(train_loader)
+    train_recon_loss = train_recon_loss / len(train_loader)
+    train_KLD_loss = train_KLD_loss / len(train_loader)
     val_loss = val_loss / len(val_loader)
+    val_recon_loss = val_recon_loss / len(val_loader)
+    val_KLD_loss = val_KLD_loss / len(val_loader)
+
     elapsed_time = time.time() - epoch_start_time
     print(f"Epoch [{epoch+1}/{num_epochs}], Train loss: {train_loss:.4f}, Val loss: {val_loss:.4f} (time: {elapsed_time:.4f})")
     
     # write loss to a csv every epoch
     with open(train_save_folder + 'loss_log.csv', mode='a', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow([epoch, train_loss, val_loss])  # Writes a single row with two values
+        writer.writerow([epoch, train_loss, val_loss, train_recon_loss, val_recon_loss, train_KLD_loss, val_KLD_loss])  # Writes a single row with two values
    
     if epoch % save_model_freq == 0:
         # model dict for saving
