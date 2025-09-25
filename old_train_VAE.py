@@ -17,17 +17,17 @@ from matplotlib.colors import ListedColormap, BoundaryNorm
 
 
 # Dataset path
-train_folder = "./datasets/anat/human_train/"
+train_folder = "./datasets/3d_anat_align/mouse_train/"
 train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
 train_paths = train_paths
 
-val_folder = "./datasets/anat/human_test/"
+val_folder = "./datasets/3d_anat_align/mouse_test/"
 val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./VAE_train/3d_anat/testing_human_best/"
+train_save_folder = "./VAE_train/3d_anat/testing_mouse_best/"
 
 os.makedirs(train_save_folder + "/test_images", exist_ok=True)
 
@@ -264,4 +264,4 @@ for epoch in range(start_epoch, start_epoch + num_epochs + 1):
             'test_loss': val_loss,
         }
 
-        torch.save(checkpoint, train_save_folder + "checkpoint_epoch_" + str(epoch))
+        torch.save(checkpoint, train_save_folder + "best_model")

@@ -19,7 +19,7 @@ conda activate cyclegan
 nvidia-smi --query-gpu=timestamp,index,utilization.gpu,utilization.memory,memory.used,memory.total --format=csv -l 600 &
 GPU_MONITOR_PID=$!
 
-python -u train_VAE.py
+python -u old_train_VAE.py
 
 # Kill background GPU monitor when job finishes
 kill $GPU_MONITOR_PID
