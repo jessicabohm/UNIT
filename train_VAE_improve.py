@@ -19,17 +19,17 @@ from sklearn.linear_model import LinearRegression
 
 
 # Dataset path
-train_folder = "./datasets/3d_anat_align/mouse_train/"
+train_folder = "./datasets/3d_anat_align/human_train/"
 train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
 train_paths = train_paths
 
-val_folder = "./datasets/3d_anat_align/mouse_test/"
+val_folder = "./datasets/3d_anat_align/human_test/"
 val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./VAE_train/3d_anat/test/"
+train_save_folder = "./VAE_train/3d_anat/human_kl_anneal/"
 
 os.makedirs(train_save_folder + "/test_images", exist_ok=True)
 os.makedirs(train_save_folder + "/vol_plots", exist_ok=True)
@@ -49,8 +49,8 @@ save_imgs_freq = 5
 save_model_freq = 10
 
 lr = 1e-4
-batch_size = 1
-accum_steps = 4 # 4
+batch_size = 4
+accum_steps = 1 # 4
 
 ###################################################################################################################
 ################################################################################################################### 
@@ -224,7 +224,6 @@ decoder = Decoder_VAE(n_upsample=n_downsample, n_res=1, dim=encoder.output_dim, 
 
 # Move to GPU if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device="cpu"
 encoder.to(device)
 decoder.to(device)
 
@@ -363,18 +362,63 @@ for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
             val_recon_loss += recon_loss.item()
             val_KLD_loss += KLD_loss.item()
 
-            # Save both argmax and softmax maps for analysis
-            probs = torch.softmax(recon, dim=1)
-            recon_argmax = torch.argmax(probs, dim=1).squeeze().detach().cpu()
+            recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
 
-            # Save for visualization
-            if save_imgs and (epoch % save_imgs_freq == 0) and i < display_size:
+            img_vol_ratios.append(get_vol_ratio(val_batch.squeeze().detach().cpu().numpy()))
+            recon_vol_ratios.append(get_vol_ratio(recon.numpy()))
+
+            # save a few test images
+            if save_imgs and (epoch % save_imgs_freq == 0) and i < 3:
+                recon_to_save.append(recon) # might just be a shallow copy
+
+                # to display
                 img_to_save.append(val_batch)
-                recon_to_save.append(recon_argmax)
 
-        # Save PNG reconstructions
+            if save_imgs and i >= 3 and i < display_size and (epoch % save_imgs_freq == 0):
+                recon_to_save.append(recon)
+                img_to_save.append(val_batch)
+
+        # save a png of some reconstructions - to observe during training
         if save_imgs and epoch % save_imgs_freq == 0:
             img_to_save = torch.stack(img_to_save).squeeze()
             recon_to_save = torch.stack(recon_to_save)
-            __write_images([img_to_save, recon_to_save], display_size,
-                           train_save_folder + f"test_images/recons_epoch_{epoch}.png")
+
+            print("save images...")
+            __write_images([img_to_save, recon_to_save], display_size, train_save_folder + "test_images/recons_epoch_" + str(epoch) + ".png")
+
+            # save vol ratios plot
+            fig = plot_vol_ratios(np.array(img_vol_ratios), np.array(recon_vol_ratios), struct_names)
+            fig.savefig(train_save_folder + "vol_plots/epoch_"+ str(epoch) + ".png")
+
+
+    train_loss = train_loss / len(train_loader)
+    train_recon_loss = train_recon_loss / len(train_loader)
+    train_KLD_loss = train_KLD_loss / len(train_loader)
+    val_loss = val_loss / len(val_loader)
+    val_recon_loss = val_recon_loss / len(val_loader)
+    val_KLD_loss = val_KLD_loss / len(val_loader)
+
+    elapsed_time = time.time() - epoch_start_time
+    print(f"Epoch [{epoch+1}/{num_epochs}], Train loss: {train_loss:.4f}, Val loss: {val_loss:.4f} (time: {elapsed_time:.4f})")
+    
+    # write loss to a csv every epoch
+    with open(train_save_folder + 'loss_log.csv', mode='a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([epoch, train_loss, val_loss, train_recon_loss, val_recon_loss, train_KLD_loss, val_KLD_loss])  # Writes a single row with two values
+   
+    if epoch % save_model_freq == 0:
+        # model dict for saving
+        checkpoint = {
+            'epoch': epoch,
+            'encoder_state_dict': encoder.state_dict(),
+            'decoder_state_dict': decoder.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'train_loss': train_loss,
+            'test_loss': val_loss,
+        }
+
+        # check early stopping
+        early_stopping(val_loss, checkpoint)
+        if early_stopping.early_stop:
+            print("Early stopping triggered. Stopping training.")
+            break
