@@ -29,7 +29,7 @@ val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./VAE_train/comb/human_1/"
+train_save_folder = "./VAE_train/comb/human_cond_1/"
 
 os.makedirs(train_save_folder + "/test_images", exist_ok=True)
 os.makedirs(train_save_folder + "/vol_plots", exist_ok=True)
@@ -49,7 +49,7 @@ save_imgs_freq = 5
 save_model_freq = 10
 
 lr = 1e-4
-batch_size = 4
+batch_size = 8
 accum_steps = 1 # 4
 
 ###################################################################################################################
@@ -57,7 +57,11 @@ accum_steps = 1 # 4
 
 # Loss function for VAE
 def loss_func(imgs, recons, means, log_vars):
+    weights = torch.ones(24, device=recons.device)
+    weights[2:] = 2.0
+
     criterion = nn.CrossEntropyLoss()
+
     recon = criterion(recons, imgs) # computes average per voxel (in CVAE they use this instead to sum over all voxels)
 
     BS = batch_size
@@ -74,22 +78,27 @@ def reparameterization(means, log_vars):
     return z
 
 class Segmentation3DDataset(Dataset):
-    def __init__(self, image_paths, transform=None):
+    def __init__(self, image_paths, transform=None, num_classes=24):
         self.image_paths = image_paths
         self.transform = transform  # Optional (e.g., normalization, crop)
+        self.num_classes = num_classes
 
     def __len__(self):
         return len(self.image_paths)
 
     def __getitem__(self, idx):
+        # load segmentation label as numpy
         image = sitk.ReadImage(self.image_paths[idx])
-        image = sitk.GetArrayFromImage(image)
+        image = sitk.GetArrayFromImage(image).astype(np.int64)  # shape (D, H, W), integers [0..23]
 
-        image = np.expand_dims(image, axis=0)
+        # one-hot encode: shape → (num_classes, D, H, W)
+        one_hot = torch.nn.functional.one_hot(torch.from_numpy(image), num_classes=self.num_classes)
+        one_hot = one_hot.permute(3, 0, 1, 2).float()  # move channels to first dim
+
         if self.transform:
-            image = self.transform(image)
+            one_hot = self.transform(one_hot)
 
-        return torch.from_numpy(image).to(torch.float)
+        return one_hot
 
 two_d = False
 
@@ -178,11 +187,12 @@ class EarlyStopping:
         self.verbose = verbose
         self.save_path = save_path
 
-    def __call__(self, val_loss, model_dict):
+    def __call__(self, val_loss, model_dict, save):
         if val_loss < self.best_loss:
             self.best_loss = val_loss
             self.counter = 0
-            self.save_checkpoint(model_dict)
+            if save == True:
+                self.save_checkpoint(model_dict)
         else:
             self.counter += 1
             if self.verbose:
@@ -220,8 +230,8 @@ def plot_vol_ratios(real_vol_ratios, synth_vol_ratios, struct_names):
             
             color = common_struct_colors[struct_i + 1]
 
-            real_data = real_vol_ratios[:, struct_i]
-            synth_data = synth_vol_ratios[:, struct_i]
+            real_data = real_vol_ratios[:, struct_i + 1]
+            synth_data = synth_vol_ratios[:, struct_i + 1]
             combined_min = min(np.min(real_data), np.min(synth_data))
             combined_max = max(np.max(real_data), np.max(synth_data))
             if combined_min == combined_max:
@@ -262,7 +272,7 @@ val_dataset = Segmentation3DDataset(image_paths=val_paths)
 val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
 # Initialize model
-encoder = Encoder_VAE(n_downsample=n_downsample, n_res=1, input_dim=1, dim=dim, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+encoder = Encoder_VAE(n_downsample=n_downsample, n_res=1, input_dim=48, dim=dim, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
 decoder = Decoder_VAE(n_upsample=n_downsample, n_res=1, dim=encoder.output_dim, output_dim=24)
 
 # Move to GPU if available
@@ -282,9 +292,21 @@ save_loss = []
 # for saving images during training
 display_size = 16 # num images to display
 
-early_stopping = EarlyStopping(patience=20, save_path=train_save_folder + "best_model.pth")
+early_stopping = EarlyStopping(patience=5, save_path=train_save_folder + "best_model.pth")
 
 beta = 10
+save = False
+checkpoint = {}
+
+# load atlas for conditioning
+atlas_path = "./human_common_comb_seg_aligned.nii"  # adjust path
+atlas_arr = sitk.GetArrayFromImage(sitk.ReadImage(atlas_path)).astype(np.int64)  # shape (D, H, W), integers [0..23]
+
+# one-hot encode: shape → (num_classes, D, H, W)
+one_hot_atlas_arr = torch.nn.functional.one_hot(torch.from_numpy(atlas_arr), num_classes=24)
+one_hot_atlas_arr = one_hot_atlas_arr.permute(3, 0, 1, 2).float()  # move channels to first dim
+one_hot_atlas = one_hot_atlas_arr.unsqueeze(0).to(device)
+
 
 print("Start training!!")
 optimizer.zero_grad()
@@ -299,17 +321,20 @@ for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
 
     for batch_idx, batch in enumerate(train_loader):
         batch = batch.to(device)  # (B, C, D, H, W)
+        one_hot_tiled_atlas_train = one_hot_atlas.repeat(batch.shape[0], 1, 1, 1, 1)
 
         # Forward pass
-        means, log_vars = encoder(batch)
+        batch_cond = torch.cat((batch, one_hot_tiled_atlas_train), dim=1) # (B, C_img + C_mask, D, H, W)
+
+        means, log_vars = encoder(batch_cond)
 
         # get latent vectors - sampled from learned dists
         z = reparameterization(means, log_vars)
 
-        recon = decoder(z)
+        recon = decoder(z, one_hot_tiled_atlas_train)
 
         # Compute loss
-        recon_loss, KLD_loss = loss_func(batch.squeeze(1).long(), recon, means, log_vars)
+        recon_loss, KLD_loss = loss_func(batch.squeeze(1), recon, means, log_vars)
         loss = (recon_loss + beta*KLD_loss) / accum_steps
 
         # Backprop
@@ -343,12 +368,14 @@ for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
         for i, val_batch in enumerate(val_loader):
             val_batch = val_batch.to(device)
 
-            means, log_vars = encoder(val_batch)
+            batch_cond = torch.cat((val_batch, one_hot_atlas), dim=1)
+
+            means, log_vars = encoder(batch_cond)
             # get latent vectors - sampled from learned dists
             z = reparameterization(means, log_vars)
-            recon = decoder(z)
+            recon = decoder(z, one_hot_atlas)
             # Compute loss
-            recon_loss, KLD_loss = loss_func(val_batch.squeeze(1).long(), recon, means, log_vars)
+            recon_loss, KLD_loss = loss_func(val_batch.squeeze(1), recon, means, log_vars)
             loss = (recon_loss + beta*KLD_loss)  / accum_steps
 
             val_loss += loss.item()
@@ -356,6 +383,7 @@ for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
             val_KLD_loss += KLD_loss.item()
 
             recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
+            val_batch = torch.argmax(val_batch, dim=1).squeeze().detach().cpu()
 
             img_vol_ratios.append(get_vol_ratio(val_batch.squeeze().detach().cpu().numpy()))
             recon_vol_ratios.append(get_vol_ratio(recon.numpy()))
@@ -409,11 +437,14 @@ for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
             'train_loss': train_loss,
             'test_loss': val_loss,
         }
+        save = True
 
-        # check early stopping
-        early_stopping(val_loss, checkpoint)
-        if early_stopping.early_stop:
-            print("Early stopping triggered. Stopping training.")
-            break
+    # check early stopping
+    early_stopping(val_loss, checkpoint, save)
+    if early_stopping.early_stop:
+        print("Early stopping triggered. Stopping training.")
+        break
+    save = False
+
 
 
