@@ -16,13 +16,14 @@ import numpy as np
 
 # HARDCORE FOR NOW
 two_d = False # NOTE: 2D vs 3D
-n_downsample = 3
-dim = 16
+n_downsample = 4
+dim = 8
 img_x = 128
 img_y = 128
 img_z = 128
 latent_dim = 2000
 
+atlas_cond = False
 
 
 if two_d:
@@ -129,12 +130,13 @@ class Decoder_VAE(nn.Module):
         self.cond_res = ResBlocks(1, 2*output_dim, res_norm, activ, pad_type=pad_type)
         self.last_layer = Conv3dBlock(2*output_dim, output_dim, 7, 1, 3, norm='none', activation='none', pad_type=pad_type)
 
-    def forward(self, x, tiled_atlas):
-        prev_x = self.model(x)
+    def forward(self, x, tiled_atlas=None):
+        out = self.model(x)
         # condition based on mask
-        z_cond = torch.cat((prev_x, tiled_atlas), dim=1)
-        z_cond = self.cond_res(z_cond)
-        out = self.last_layer(z_cond)
+        if atlas_cond:
+            z_cond = torch.cat((out, tiled_atlas), dim=1)
+            z_cond = self.cond_res(z_cond)
+            out = self.last_layer(z_cond)
         return out
     
 

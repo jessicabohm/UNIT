@@ -29,7 +29,7 @@ val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./VAE_train/comb/human_cond_1/"
+train_save_folder = "./VAE_train/comb/human_r1_ds_4_d_4_aug_5/"
 
 os.makedirs(train_save_folder + "/test_images", exist_ok=True)
 os.makedirs(train_save_folder + "/vol_plots", exist_ok=True)
@@ -49,16 +49,17 @@ save_imgs_freq = 5
 save_model_freq = 10
 
 lr = 1e-4
-batch_size = 8
+batch_size = 16
 accum_steps = 1 # 4
+
 
 ###################################################################################################################
 ################################################################################################################### finish setting some params
 
 # Loss function for VAE
 def loss_func(imgs, recons, means, log_vars):
-    weights = torch.ones(24, device=recons.device)
-    weights[2:] = 2.0
+    #weights = torch.ones(24, device=recons.device)
+    #weights[2:] = 2.0
 
     criterion = nn.CrossEntropyLoss()
 
@@ -91,14 +92,16 @@ class Segmentation3DDataset(Dataset):
         image = sitk.ReadImage(self.image_paths[idx])
         image = sitk.GetArrayFromImage(image).astype(np.int64)  # shape (D, H, W), integers [0..23]
 
-        # one-hot encode: shape → (num_classes, D, H, W)
-        one_hot = torch.nn.functional.one_hot(torch.from_numpy(image), num_classes=self.num_classes)
-        one_hot = one_hot.permute(3, 0, 1, 2).float()  # move channels to first dim
+        if atlas_cond:
+            # one-hot encode: shape → (num_classes, D, H, W)
+            one_hot = torch.nn.functional.one_hot(torch.from_numpy(image), num_classes=self.num_classes)
+            one_hot = one_hot.permute(3, 0, 1, 2).float()  # move channels to first dim
 
-        if self.transform:
-            one_hot = self.transform(one_hot)
-
-        return one_hot
+            return one_hot
+        else:
+            image = np.expand_dims(image, axis=0)
+            return torch.from_numpy(image).to(torch.float)
+        
 
 two_d = False
 
@@ -272,7 +275,12 @@ val_dataset = Segmentation3DDataset(image_paths=val_paths)
 val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
 # Initialize model
-encoder = Encoder_VAE(n_downsample=n_downsample, n_res=1, input_dim=48, dim=dim, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+
+if atlas_cond:
+    encoder = Encoder_VAE(n_downsample=n_downsample, n_res=1, input_dim=48, dim=dim, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+else:
+    encoder = Encoder_VAE(n_downsample=n_downsample, n_res=1, input_dim=1, dim=dim, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+
 decoder = Decoder_VAE(n_upsample=n_downsample, n_res=1, dim=encoder.output_dim, output_dim=24)
 
 # Move to GPU if available
@@ -298,14 +306,15 @@ beta = 10
 save = False
 checkpoint = {}
 
-# load atlas for conditioning
-atlas_path = "./human_common_comb_seg_aligned.nii"  # adjust path
-atlas_arr = sitk.GetArrayFromImage(sitk.ReadImage(atlas_path)).astype(np.int64)  # shape (D, H, W), integers [0..23]
+if atlas_cond:
+    # load atlas for conditioning
+    atlas_path = "./human_common_comb_seg_aligned.nii"  # adjust path
+    atlas_arr = sitk.GetArrayFromImage(sitk.ReadImage(atlas_path)).astype(np.int64)  # shape (D, H, W), integers [0..23]
 
-# one-hot encode: shape → (num_classes, D, H, W)
-one_hot_atlas_arr = torch.nn.functional.one_hot(torch.from_numpy(atlas_arr), num_classes=24)
-one_hot_atlas_arr = one_hot_atlas_arr.permute(3, 0, 1, 2).float()  # move channels to first dim
-one_hot_atlas = one_hot_atlas_arr.unsqueeze(0).to(device)
+    # one-hot encode: shape → (num_classes, D, H, W)
+    one_hot_atlas_arr = torch.nn.functional.one_hot(torch.from_numpy(atlas_arr), num_classes=24)
+    one_hot_atlas_arr = one_hot_atlas_arr.permute(3, 0, 1, 2).float()  # move channels to first dim
+    one_hot_atlas = one_hot_atlas_arr.unsqueeze(0).to(device)
 
 
 print("Start training!!")
@@ -321,20 +330,26 @@ for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
 
     for batch_idx, batch in enumerate(train_loader):
         batch = batch.to(device)  # (B, C, D, H, W)
-        one_hot_tiled_atlas_train = one_hot_atlas.repeat(batch.shape[0], 1, 1, 1, 1)
 
-        # Forward pass
-        batch_cond = torch.cat((batch, one_hot_tiled_atlas_train), dim=1) # (B, C_img + C_mask, D, H, W)
-
-        means, log_vars = encoder(batch_cond)
+        if atlas_cond:
+            one_hot_tiled_atlas_train = one_hot_atlas.repeat(batch.shape[0], 1, 1, 1, 1)
+            # Forward pass
+            batch_cond = torch.cat((batch, one_hot_tiled_atlas_train), dim=1) # (B, C_img + C_mask, D, H, W)
+            means, log_vars = encoder(batch_cond)
+        
+        else:
+            means, log_vars = encoder(batch)
 
         # get latent vectors - sampled from learned dists
         z = reparameterization(means, log_vars)
 
-        recon = decoder(z, one_hot_tiled_atlas_train)
+        if atlas_cond:
+            recon = decoder(z, one_hot_tiled_atlas_train)
+        else:
+            recon = decoder(z)
 
         # Compute loss
-        recon_loss, KLD_loss = loss_func(batch.squeeze(1), recon, means, log_vars)
+        recon_loss, KLD_loss = loss_func(batch.squeeze(1).long(), recon, means, log_vars) # remove long for cond
         loss = (recon_loss + beta*KLD_loss) / accum_steps
 
         # Backprop
@@ -368,14 +383,24 @@ for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
         for i, val_batch in enumerate(val_loader):
             val_batch = val_batch.to(device)
 
-            batch_cond = torch.cat((val_batch, one_hot_atlas), dim=1)
+            if atlas_cond:
+                batch_cond = torch.cat((val_batch, one_hot_atlas), dim=1)
+                means, log_vars = encoder(batch_cond)
 
-            means, log_vars = encoder(batch_cond)
+            else:
+                means, log_vars = encoder(val_batch)
+
             # get latent vectors - sampled from learned dists
             z = reparameterization(means, log_vars)
-            recon = decoder(z, one_hot_atlas)
+            
+            if atlas_cond:
+                recon = decoder(z, one_hot_atlas)
+
+            else:
+                recon = decoder(z)
+
             # Compute loss
-            recon_loss, KLD_loss = loss_func(val_batch.squeeze(1), recon, means, log_vars)
+            recon_loss, KLD_loss = loss_func(val_batch.squeeze(1).long(), recon, means, log_vars) # remove long for cond
             loss = (recon_loss + beta*KLD_loss)  / accum_steps
 
             val_loss += loss.item()
@@ -383,7 +408,9 @@ for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
             val_KLD_loss += KLD_loss.item()
 
             recon = torch.argmax(recon, dim=1).squeeze().detach().cpu()
-            val_batch = torch.argmax(val_batch, dim=1).squeeze().detach().cpu()
+
+            if atlas_cond:
+                val_batch = torch.argmax(val_batch, dim=1).squeeze().detach().cpu()
 
             img_vol_ratios.append(get_vol_ratio(val_batch.squeeze().detach().cpu().numpy()))
             recon_vol_ratios.append(get_vol_ratio(recon.numpy()))
