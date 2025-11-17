@@ -19,17 +19,17 @@ from sklearn.linear_model import LinearRegression
 
 
 # Dataset path
-train_folder = "./datasets/3d_anat_align/human_train/"
+train_folder = "./datasets/3d_anat_align/mouse_train/"
 train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
 train_paths = train_paths
 
-val_folder = "./datasets/3d_anat_align/human_test/"
+val_folder = "./datasets/3d_anat_align/mouse_test/"
 val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./VAE_train/3d_anat/human_7_test_new/"
+train_save_folder = "./VAE_train/3d_anat/test/"
 
 os.makedirs(train_save_folder + "/test_images", exist_ok=True)
 os.makedirs(train_save_folder + "/vol_plots", exist_ok=True)
@@ -49,8 +49,8 @@ save_imgs_freq = 5
 save_model_freq = 10
 
 lr = 1e-4
-batch_size = 4
-accum_steps = 4 # 4
+batch_size = 1
+accum_steps = 16 # 4
 
 ###################################################################################################################
 ################################################################################################################### finish setting some params

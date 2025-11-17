@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from old_networks_update import *
+from networks_update import *
 import csv
 import time
 import torchvision.utils as vutils
@@ -17,17 +17,17 @@ from matplotlib.colors import ListedColormap, BoundaryNorm
 
 
 # Dataset path
-train_folder = "./datasets/3d_anat_align/mouse_train/"
+train_folder = "./datasets/3d_anat_align/human_train/"
 train_paths = [train_folder + file_name for file_name in os.listdir(train_folder)]
 
 train_paths = train_paths
 
-val_folder = "./datasets/3d_anat_align/mouse_test/"
+val_folder = "./datasets/3d_anat_align/human_test/"
 val_paths = [val_folder + file_name for file_name in os.listdir(val_folder)]
 val_paths.sort()
 
 # folder to save model checkpoints
-train_save_folder = "./VAE_train/3d_anat/testing_mouse_best/"
+train_save_folder = "./VAE_train/3d_anat/testing_old/"
 
 os.makedirs(train_save_folder + "/test_images", exist_ok=True)
 
@@ -46,7 +46,7 @@ save_imgs_freq = 5
 save_model_freq = 10
 
 lr=1e-4
-batch_size= 4
+batch_size= 1
 
 ###################################################################################################################
 ################################################################################################################### finish setting some params
@@ -146,7 +146,7 @@ val_dataset = Segmentation3DDataset(image_paths=val_paths)
 val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
 # Initialize model
-encoder = Encoder_VAE(n_downsample=2, n_res=1, input_dim=1, dim=4, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
+encoder = Encoder_VAE(n_downsample=2, n_res=1, input_dim=1, dim=2, norm='in', activ='relu', pad_type='zero') # encodes to 32 dim??
 decoder = Decoder_VAE(n_upsample=2, n_res=1, dim=encoder.output_dim, output_dim=271)
 
 # Move to GPU if available

@@ -248,6 +248,8 @@ early_stopping = EarlyStopping(patience=20, save_path=train_save_folder + "best_
 
 beta = 10
 
+
+
 print("Start training!!")
 optimizer.zero_grad()
 for i, epoch in enumerate(range(start_epoch, start_epoch + num_epochs + 1)):
